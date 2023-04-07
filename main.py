@@ -1,4 +1,5 @@
 import os
+import traceback
 
 import selenium
 from webdriver_manager.chrome import ChromeDriverManager
@@ -17,8 +18,8 @@ import stockfish
 
 class Log:
     @staticmethod
-    def info(o):
-        print(o)
+    def info(*o):
+        print(*o)
 
     @staticmethod
     def error(o):
@@ -29,7 +30,7 @@ def setup_driver(profile_path=None):
 
     options = Options()
     headless=False
-    profile_dir=os.getcwd()+"/Selenium"
+    profile_dir=os.getcwd()+"/Profile/Selenium"
 
     options.add_argument("--ignore-certificate-errors")
     options.add_argument("--disable-web-security")
@@ -75,12 +76,17 @@ if __name__ == '__main__':
     let_to_num = dict(zip("abcdefgh",range(1,9)))
 
     def get_last_move(driver:webdriver.Chrome):
+
         pieces_ = driver.find_elements(By.CLASS_NAME,"piece")
+        Log.info("pieces: ", pieces_)
         highlighted = driver.find_elements(By.CLASS_NAME,"highlight")
+        Log.info("highlighted: ",highlighted)
+
         if len(highlighted)<2:
+            Log.error("len(highlighted)<2")
             return None
         if len(highlighted)>2:
-            raise Exception()
+            Log.error("len(highlighted)>2")
 
         first,second = highlighted
         for piece in pieces_:
@@ -91,10 +97,10 @@ if __name__ == '__main__':
                 elif cls.startswith("square-") and cls in second.get_attribute("class"):
                     break
 
-        f = lambda x : num_to_let[x[0]]+x[1]
+        f = lambda x : num_to_let[int(x[0])]+x[1]
 
-        tile1 = [f(x.ltrim("square")) for x in first.get_attribute("class").split() if x.startswith("square-")][0]
-        tile2 = [f(x.ltrim("square")) for x in second.get_attribute("class").split() if x.startswith("square-")][0]
+        tile1 = [f(x.lstrip("square-")) for x in first.get_attribute("class").split() if x.startswith("square-")][0]
+        tile2 = [f(x.lstrip("square-")) for x in second.get_attribute("class").split() if x.startswith("square-")][0]
         #piece_type = [x for x in first.get_attribute("class").split() if len(x)==2][0]
         #move_by,piece_type=piece_type[0],piece_type[1]
         return tile1,tile2
@@ -102,37 +108,47 @@ if __name__ == '__main__':
 
 
     def play(driver:webdriver.Chrome,wait:WebDriverWait,engine:stockfish.Stockfish,move):
-        engine.make_moves_from_current_position(move)
+        engine.make_moves_from_current_position([move])
 
         pos0 = move[:2]
         pos1 = move[2:]
         pos0 = "square-"+str(let_to_num[pos0[0]])+pos0[1]
         pos1 = "square-"+str(let_to_num[pos1[0]])+pos1[1]
 
-        cls = " ".join(["piece",pos1,"wp","1234"])
+        cls = " ".join(["piece",pos1,"wp","p1234"])
 
+        Log.info("adding board item")
         scr = """
         var board = document.getElementsByClassName('board').item(0);
         var piece = document.createElement('div');
         
-        li.setAttribute('class', '%s');
-        ul.appendChild(li);
+        piece.setAttribute('class', '%s');
+        board.appendChild(piece);
         """%cls
         driver.execute_script(scr)
-        sleep(1)
+        Log.info("board item added")
+
+        Log.info("making a move...")
+        #sleep(1)
         e0 = wait.until(EC.element_to_be_clickable((By.CLASS_NAME, pos0)))
         e0.click()
-        sleep(0.1)
-        e1=wait.until(EC.element_to_be_clickable((By.CLASS_NAME, "1234")))
+        Log.info("first clicked...")
+        #sleep(0.1)
+        e1=wait.until(EC.element_to_be_clickable((By.CLASS_NAME, "p1234")))
         e1.click()
-        sleep(1)
+        Log.info("second clicked...")
+        #sleep(1)
+        Log.info("move is made")
+        Log.info("removing the piece...")
         scr1 = """
         var board = document.getElementsByClassName('board').item(0);
-        var to_rm = document.getElementsByClassName('1234').item(0);
+        var to_rm = document.getElementsByClassName('p1234').item(0);
         board.removeChild(to_rm)
         """
         driver.execute_script(scr1)
-        sleep(10)
+        Log.info("waiting...")
+        #sleep()
+        Log.info("next move")
 
 
 
@@ -145,10 +161,11 @@ if __name__ == '__main__':
                 EC.presence_of_element_located((By.CLASS_NAME, "board"))
             )
             Log.info("board found")
-            board = driver.find_elements(By.CLASS_NAME,"board")[1]
+            sleep(3)
+            board = driver.find_elements(By.CLASS_NAME,"board")[0]
 
-            is_black = "flipped" in board.get_attribute("class")
-            print(board.get_attribute("textContent"))
+            is_black = "flipped" in board.get_attribute("outerHTML")
+            #Log.info("contents: ",board.get_attribute("outerHTML"))
             Log.info("is black: %s"%is_black)
 
             engine = stockfish.Stockfish(path="C:\stockfish\stockfish-windows-2022-x86-64-avx2.exe")
@@ -157,33 +174,49 @@ if __name__ == '__main__':
             )
 
             if is_black:
+                Log.info("waiting for \"highlight\" element")
                 wait.until(
                     EC.presence_of_element_located((By.CLASS_NAME,"highlight"))
                 )
+                Log.info("element found")
                 t1,t2=get_last_move(driver)
-                play(driver,wait,engine,t1+t2)
+                Log.info("last move:",t1+t2)
+                engine.make_moves_from_current_position([t1+t2])
             else:
                 play(driver,wait,engine,engine.get_best_move())
                 wait.until(
-                    EC.presence_of_element_located((By.CLASS_NAME, "highlight"))
+                    EC.element_selection_state_to_be((By.CLASS_NAME, "highlight"))
                 )
-
-            hl = driver.find_elements(By.CLASS_NAME, "highlight")[0]
-            hl_cls = hl.get_attribute("class")
-            loops_count_max=10
+                t1, t2 = get_last_move(driver)
+            last_moved=t1
+            hl_cls = "square-"+t1
+            loops_count_max=100
             loop=0
             while loop<loops_count_max:
                 loop+=1
-                wait.until(not EC.text_to_be_present_in_element_attribute(
-                    hl,"class",hl_cls
-                ))
-                hl_cls = hl.get_property("class")
-                print("text",hl.text)
+                move=engine.get_best_move()
+                Log.info("playing next move: ",move)
+                play(driver, wait, engine, move)
+                last_moved=str(let_to_num[move[0]])+move[1]
+
+                cls = "square-" + last_moved
+
+                piece = driver.find_element(By.CLASS_NAME,cls)
+                state = piece.get_attribute("outerHTML")
+                Log.info("move played")
+                Log.info("waiting for opponent's move")
+                sleep(0.1)
+
+                wait.until(lambda drv: drv.find_element(By.CLASS_NAME,cls).get_attribute("outerHTML")!=state)
+
                 t1, t2 = get_last_move(driver)
-                play(driver,wait,engine,t1 + t2)
+                last_moved=t2
+                Log.info("opponent's move: ",t1+t2)
+                engine.make_moves_from_current_position([t1 + t2])
 
         except:
-            pass
+            exc=traceback.format_exc()
+            print(exc)
 
     async def main():
         driver = setup_driver()
@@ -193,7 +226,7 @@ if __name__ == '__main__':
             await cdpSession.execute(
                 devtools.emulation.set_geolocation_override(latitude=48.8781, longitude=-28.6298, accuracy=95))
             actions(driver,session)
-            sleep(10000)
+            sleep(1000)
             driver.quit()
 
     trio.run(main)
