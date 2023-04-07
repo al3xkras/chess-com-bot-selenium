@@ -3,6 +3,7 @@
 **/__pycache__
 **/.ipynb_checkpoints
 *.pdf
+/Profile/
 
 HELP.md
 target/
