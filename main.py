@@ -183,13 +183,8 @@ if __name__ == '__main__':
                 Log.info("last move:",t1+t2)
                 engine.make_moves_from_current_position([t1+t2])
             else:
-                play(driver,wait,engine,engine.get_best_move())
-                wait.until(
-                    EC.element_selection_state_to_be((By.CLASS_NAME, "highlight"))
-                )
-                t1, t2 = get_last_move(driver)
+                t1, t2 = None,None
             last_moved=t1
-            hl_cls = "square-"+t1
             loops_count_max=100
             loop=0
             while loop<loops_count_max:
@@ -206,9 +201,8 @@ if __name__ == '__main__':
                 Log.info("move played")
                 Log.info("waiting for opponent's move")
                 sleep(0.1)
-
                 wait.until(lambda drv: drv.find_element(By.CLASS_NAME,cls).get_attribute("outerHTML")!=state)
-
+                sleep(0.1)
                 t1, t2 = get_last_move(driver)
                 last_moved=t2
                 Log.info("opponent's move: ",t1+t2)
