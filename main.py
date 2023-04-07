@@ -6,10 +6,22 @@ from time import time,sleep
 import selenium.webdriver.common.devtools.v106 as devtools
 import trio
 
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.common.by import By
+
+import stockfish
+
+
 class Log:
     @staticmethod
     def info(o):
         print(o)
+
+    @staticmethod
+    def error(o):
+        print(o)
+
 
 def setup_driver():
 
@@ -46,19 +58,62 @@ def setup_driver():
 
     return chrome_driver
 
-
+class Piece:
+    def __init__(self,type_:str|None,pos:tuple|None):
+        self.type=type_
+        self.pos=pos
 if __name__ == '__main__':
+
+    # Define the URL of the webpage you want to open
+    url = "https://www.chess.com/"
+
+    piece_types = { "p", "b", "n", "r", "k", "q"}
+    piece_colors={ "w", "b" }
+    piece_classes = set(y+x for x in piece_types for y in piece_colors)
+
+    board_items = [[(i,j) for i in range(1,9)] for j in range(8,0,-1)]
+
+    def get_position(driver:webdriver.Chrome, wait:WebDriverWait):
+        pieces_ = driver.find_elements(By.CLASS_NAME,"piece")
+        pieces=[]
+        for piece in pieces_:
+            classes = piece.get_attribute("class").split()
+            p = Piece(None,None)
+            for cls in classes:
+                if cls.startswith("square-"):
+                    pos = cls.lstrip("square-")
+                    p.pos=int(pos[0]),int(pos[1])
+                elif cls in piece_classes:
+                    p.type=cls
+            if p.type is None or p.pos is None:
+                Log.error("piece init failed: %s"%p)
+
+    def actions(driver:webdriver.Chrome,session):
+        try:
+            driver.get(url)
+            wait = WebDriverWait(driver, 15)
+            element = WebDriverWait(driver, 15).until(
+                EC.element_to_be_clickable((By.CLASS_NAME, "board"))
+            )
+
+            element = wait.until(
+                EC.presence_of_element_located((By.ID, "board"))
+            )
+
+        except:
+            pass
+
     async def main():
         driver = setup_driver()
-
         async with driver.bidi_connection() as session:
-            Log.info("a")
+            Log.info("session open")
             cdpSession = session.session
             await cdpSession.execute(
-                devtools.emulation.set_geolocation_override(latitude=41.8781, longitude=-87.6298, accuracy=95))
-
-            driver.get("https://www.python.org")
-            sleep(5)
+                devtools.emulation.set_geolocation_override(latitude=48.8781, longitude=-28.6298, accuracy=95))
+            actions(driver,session)
             driver.quit()
 
-    trio.run(main)
+
+    #trio.run(main)
+    for x in board_items:
+        print(x)
