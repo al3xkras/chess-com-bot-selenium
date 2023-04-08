@@ -4,6 +4,7 @@
 **/.ipynb_checkpoints
 *.pdf
 /Profile/
+/stockfish/
 
 HELP.md
 target/
