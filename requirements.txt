@@ -2,3 +2,4 @@ selenium~=4.5.0
 webdriver-manager
 trio~=0.22.0
 stockfish
+numpy
