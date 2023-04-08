@@ -2,6 +2,7 @@ import os
 from time import time, sleep
 
 import numpy as np
+import selenium.common.exceptions
 import selenium.webdriver.common.devtools.v106 as devtools
 import stockfish
 import trio
@@ -22,7 +23,7 @@ else:
     raise Exception("platform not supported: %s"%platform.platform())
 
 url = "https://www.chess.com/play/computer"
-ask_confirmation=True
+ask_confirmation=False
 
 num_to_let = dict(zip(range(1, 9), "abcdefgh"))
 let_to_num = dict(zip("abcdefgh", range(1, 9)))
@@ -46,13 +47,22 @@ class C:
     promotion_moves=["1","8"]
 
 class Log:
+    _debug=False
+
     @staticmethod
     def info(*o):
         print(*o)
 
     @staticmethod
-    def error(o):
+    def error(*o):
         print(o)
+
+    @classmethod
+    def debug(cls,*o):
+        if cls._debug:
+            print(o)
+
+
 
 
 def setup_driver(profile_path=None):
@@ -93,13 +103,13 @@ def setup_driver(profile_path=None):
 def get_last_move(driver: webdriver.Chrome):
 
     pieces_ = driver.find_elements(By.CLASS_NAME, C.piece)
-    Log.info("pieces: ", pieces_)
+    Log.debug("pieces: ", pieces_)
     highlighted = driver.find_elements(By.CLASS_NAME, C.highlight)
-    Log.info("highlighted: ", highlighted)
+    Log.debug("highlighted: ", highlighted)
 
     if len(highlighted) < 2:
         Log.error("len(highlighted)<2")
-        return None
+        return "",""
     if len(highlighted) > 2:
         Log.error("len(highlighted)>2")
 
@@ -146,10 +156,11 @@ def play(driver: webdriver.Chrome, wait: WebDriverWait, engine: stockfish.Stockf
     e0 = wait.until(EC.element_to_be_clickable((By.CLASS_NAME, pos0)))
     e0.click()
     Log.info("First clicked...")
-    # sleep(0.1)
+    #sleep(0.05)
     e1 = wait.until(EC.element_to_be_clickable((By.CLASS_NAME, C.some_id)))
     e1.click()
     Log.info("Second clicked...")
+
     # sleep(1)
     Log.info("The move is played")
     Log.info("Removing the pointer...")
@@ -159,8 +170,18 @@ def play(driver: webdriver.Chrome, wait: WebDriverWait, engine: stockfish.Stockf
     board.removeChild(to_rm)
     """%C.some_id
     driver.execute_script(scr1)
-    Log.info("waiting...")
-    # sleep()
+
+    w = WebDriverWait(driver, 0.05)
+    try:
+        window = w.until(EC.visibility_of_element_located((By.CLASS_NAME, "promotion-window")))
+        sleep(0.2)
+        items = window.find_elements(By.CLASS_NAME, "bq")
+        if len(items)==0:
+            items = window.find_elements(By.CLASS_NAME, "wq")
+        items[0].click()
+    except selenium.common.exceptions.TimeoutException:
+        pass
+
     Log.info("next move")
 
 
@@ -186,44 +207,42 @@ def actions(driver: webdriver.Chrome, session):
     engine.set_fen_position(
         "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", True
     )
+    game_over = False
+    wait_10ms=WebDriverWait(driver,0.01)
 
-    if is_black:
-        Log.info("Waiting for a \"highlight\" element")
-        wait.until(
-            EC.presence_of_element_located((By.CLASS_NAME, C.highlight))
-        )
-        Log.info("Element found")
-        t1, t2 = get_last_move(driver)
-        Log.info("Previous move:", t1 + t2)
-        engine.make_moves_from_current_position([t1 + t2])
-    else:
-        t1, t2 = None, None
-    last_move = t1
-    loop_id = 0
-    btime = None
-    time_std = 680
-    time_avg = 550
-    while loop_id < moves_limit:
-        loop_id += 1
-        move = engine.get_best_move(btime=btime)
-        Log.info("Playing the next move: ", move)
-        play(driver, wait, engine, move)
-        last_move = str(let_to_num[move[0]]) + move[1]
+    Log.info("Waiting for a \"highlight\" element")
+    wait.until(
+        lambda drv:len(drv.find_elements(By.CLASS_NAME, C.highlight))>=2
+    )
+    t1, t2 = get_last_move(driver)
+    engine.make_moves_from_current_position([t1+t2])
 
-        cls = C.square + last_move
+    def f(elements, cls):
+        return any(cls in x.get_attribute(C.outerHTML) for x in elements)
 
-        piece = driver.find_element(By.CLASS_NAME, cls)
-        state = piece.get_attribute(C.outerHTML)
-        Log.info("The move is played")
-        Log.info("Waiting for opponent's move")
-        op_time = time()
+    def op_move(drv: selenium.webdriver.Chrome,last_tiles):
+        nonlocal game_over
+        try:
+            modal1 = "board-modal-modal"
+            modal2 = "game-over-modal"
+            xpath = "//div[@class='%s' or @id='%s']" % (modal1, modal2)
+            wait_10ms.until(EC.visibility_of_element_located((By.XPATH, xpath)))
+
+            game_over = True
+        except selenium.common.exceptions.TimeoutException:
+            pass
+        elements = drv.find_elements(By.CLASS_NAME, C.highlight)
+        return game_over or not (f(elements, last_tiles[0]) and f(elements, last_tiles[1]))
+
+    def wait_op(last_tiles) -> bool:
+        wait.until(lambda drv: op_move(drv,last_tiles))
+        if game_over:
+            Log.info("game over")
+            return True
+        # op_time = time() - op_time
+        # btime = abs(np.random.normal(loc=max(0,time_avg-btime),scale=op_time*time_std))
         sleep(0.1)
-        wait.until(lambda drv: drv.find_element(By.CLASS_NAME, cls).get_attribute(C.outerHTML) != state)
-        op_time = time() - op_time
-        btime = op_time + abs(np.random.random()) * time_std + time_avg
-        sleep(0.1)
         t1, t2 = get_last_move(driver)
-        last_move = t2
         move_ = t1 + t2
 
         Log.info("Opponent's move: ", move_)
@@ -232,8 +251,53 @@ def actions(driver: webdriver.Chrome, session):
         except ValueError:
             if move_[3] in C.promotion_moves:
                 Log.error("not implemented")
-                #move_ += "q"
+                # move_ += "q"
             engine.make_moves_from_current_position([move_])
+        return False
+
+    if not is_black:
+        if wait_op([C.square+t1,C.square+t2]):
+            return True
+
+    loop_id = 0
+    #btime = 1000
+    #time_std = 750
+    #time_avg = 350
+    while loop_id < moves_limit:
+        loop_id += 1
+        #t=time()
+        #m_count=2
+        n_moves=4
+        p = np.array([1/loop_id**(_-1.2) for _ in range(1,n_moves+1)])
+        p /= np.sum(p)
+        print(p)
+        i = np.random.choice([0, 1, 2, 3], p=p)
+        w=np.random.choice([1,1.3,2,2],p=[0.6,0.2,0.1,0.1])
+        if i-1>0:
+            sleep((i-1)*w)
+        Log.info(i)
+        #print(i)
+        move = engine.get_top_moves(i+1)[::-1][0]['Move'] if i>0 else engine.get_best_move()
+        #t=time()-t
+        #sleep(max(0,(i+1)*(btime-t*1000)/1000))
+        Log.info("Playing next move: ", move)
+        try:
+            play(driver, wait, engine, move)
+        except selenium.common.exceptions.ElementClickInterceptedException:
+            game_over=True
+        tile1 = str(let_to_num[move[0]]) + move[1]
+        tile2 = str(let_to_num[move[2]]) + move[3]
+        cls1 = C.square + tile1
+        cls2 = C.square + tile2
+
+        Log.info("The move is played")
+        Log.info("Waiting for opponent's move")
+        sleep(0.1)
+
+        if wait_op([cls1,cls2]):
+            return True
+
+    return False
 
 if __name__ == '__main__':
     async def main():
@@ -243,7 +307,7 @@ if __name__ == '__main__':
             cdpSession = session.session
             await cdpSession.execute(
                 devtools.emulation.set_geolocation_override(**location_override, accuracy=95))
-            actions(driver, session)
+            while actions(driver, session): pass
             s=10
             Log.info("Closing Selenium WebDriver in %s seconds"%s)
             sleep(s)
