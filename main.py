@@ -17,6 +17,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 import platform
 
 first_move_if_playing_white = "g1f3"
+first_move_autoplay = True
 
 if "win" in platform.platform().lower():
     stockfish_path = "/stockfish/stockfish"
@@ -48,6 +49,7 @@ class C:
     hover = "hover-"
     highlight = "highlight"
     class_ = "class"
+    board_xpath = "//div[@class='small-controls-rightIcons' or @class='live-game-buttons-component']"
     some_id = "p1234"
     promotion_moves = ["1", "8"]
 
@@ -146,7 +148,7 @@ def play(driver: webdriver.Chrome, wait: WebDriverWait, engine: stockfish.Stockf
 
     cls = " ".join([C.piece, pos1, "wp", C.some_id])
 
-    Log.info("adding board item")
+    Log.info("Adding a pointer")
     scr = """
     var board = document.getElementsByClassName('%s').item(0);
     var piece = document.createElement('div');
@@ -155,17 +157,17 @@ def play(driver: webdriver.Chrome, wait: WebDriverWait, engine: stockfish.Stockf
     board.appendChild(piece);
     """ % (C.board, cls)
     driver.execute_script(scr)
-    Log.info("board item added")
+    Log.info("Pointer added")
 
     Log.info("Playing next move...")
     # sleep(1)
     e0 = wait.until(EC.element_to_be_clickable((By.CLASS_NAME, pos0)))
     e0.click()
-    Log.info("First clicked...")
+    Log.info("First tile clicked...")
     # sleep(0.05)
     e1 = wait.until(EC.element_to_be_clickable((By.CLASS_NAME, C.some_id)))
     e1.click()
-    Log.info("Second clicked...")
+    Log.info("Second tile clicked...")
 
     # sleep(1)
     Log.info("The move is played")
@@ -203,14 +205,33 @@ def actions(engine: stockfish.Stockfish, driver: webdriver.Chrome, session):
     game_over = False
     wait_10ms = WebDriverWait(driver, 0.01)
 
-    Log.info("Waiting for a \"highlight\" element")
-    wait1.until(
-        lambda drv: len(drv.find_elements(By.CLASS_NAME, C.highlight)) >= 2
-    )
-    Log.info("Chess board found")
+    if not first_move_autoplay:
+        Log.info("Waiting for a \"highlight\" element")
+        wait1.until(
+            lambda drv: len(drv.find_elements(By.CLASS_NAME, C.highlight)) >= 2
+        )
+    else:
+        try:
+            Log.info("Waiting for the \"board\"")
+            wait1.until(
+                EC.element_to_be_clickable((By.CLASS_NAME, C.board))
+            )
+            Log.info("Waiting for the game to start")
+            wait1.until(
+                EC.element_to_be_clickable((By.XPATH, C.board_xpath))
+            )
+        except selenium.common.exceptions.TimeoutException:
+            return True
+
     board = driver.find_elements(By.CLASS_NAME, C.board)[0]
+    Log.info("Chess board was found")
 
     is_black = C.flipped in board.get_attribute(C.class_)
+    if is_black:
+        Log.info("Waiting for a \"highlight\" element")
+        wait1.until(
+            lambda drv: len(drv.find_elements(By.CLASS_NAME, C.highlight)) >= 2
+        )
 
     Log.info("Is playing black pieces: %s" % is_black)
 
@@ -268,16 +289,16 @@ def actions(engine: stockfish.Stockfish, driver: webdriver.Chrome, session):
         return any(x in mv for x in w)
 
     if not is_black:
+        play(driver, wait1, engine, first_move_if_playing_white)
         t1, t2 = get_last_move(driver)
-        print(t1, t2)
-
-        if is_move_by_white(t1):
-            print("Last move by white: True")
-            engine.make_moves_from_current_position([t1 + t2])
+        by_w_ = is_move_by_white(t1)
+        Log.info("Last move by white: %s" % by_w_)
+        if by_w_:
+            if not first_move_autoplay:
+                engine.make_moves_from_current_position([t1 + t2])
             if wait_op([C.square + move_fmt(t1), C.square + move_fmt(t2)]):
                 return True
         else:
-            print("Last move by white: False")
             engine.make_moves_from_current_position([first_move_if_playing_white, t1 + t2])
 
     else:
@@ -295,7 +316,6 @@ def actions(engine: stockfish.Stockfish, driver: webdriver.Chrome, session):
         n_moves = 4
         p = np.array([1 / loop_id ** (_ - 1.2) for _ in range(1, n_moves + 1)])
         p /= np.sum(p)
-        print(p)
         i = np.random.choice([0, 1, 2, 3], p=p)
         # w=np.random.choice([1,1.3,2,2],p=[0.6,0.2,0.1,0.1])
         # if i-1>0 and loop_id>3:
@@ -340,7 +360,7 @@ if __name__ == '__main__':
                 try:
                     return actions(engine, driver, session)
                 except Exception as e:
-                    exc=traceback.format_exc()
+                    exc = traceback.format_exc()
                     print(exc)
                     return True
 
