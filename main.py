@@ -1,4 +1,5 @@
 import os
+import random
 import traceback
 from time import time, sleep
 
@@ -15,6 +16,9 @@ from selenium.webdriver.support.ui import WebDriverWait
 from webdriver_manager.chrome import ChromeDriverManager
 
 import platform
+
+game_timer = 1000 * 60
+timer_ = game_timer
 
 first_move_if_playing_white = "g1f3"
 first_move_autoplay = True
@@ -37,7 +41,7 @@ location_override = {
     "longitude": -28.6298
 }
 
-moves_limit = 150
+moves_limit = 350
 
 
 class C:
@@ -194,6 +198,7 @@ def play(driver: webdriver.Chrome, wait: WebDriverWait, engine: stockfish.Stockf
 
 
 def actions(engine: stockfish.Stockfish, driver: webdriver.Chrome, session):
+    global timer_
     engine.set_fen_position("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", True)
     # engine.set_elo_rating(2234)
 
@@ -224,7 +229,8 @@ def actions(engine: stockfish.Stockfish, driver: webdriver.Chrome, session):
             return True
 
     board = driver.find_elements(By.CLASS_NAME, C.board)[0]
-    Log.info("Chess board was found")
+    Log.info("Chess board found")
+    timer_ = game_timer
 
     is_black = C.flipped in board.get_attribute(C.class_)
     if is_black:
@@ -323,10 +329,38 @@ def actions(engine: stockfish.Stockfish, driver: webdriver.Chrome, session):
         # Log.info(i)
         # print(i)
         #        move = engine.get_top_moves(i+1)[::-1][0]['Move'] if i>0 else engine.get_best_move()
+        t_ = time()
         move = engine.get_best_move()
-        # t=time()-t
+        t_ = time() - t_
         # sleep(max(0,(i+1)*(btime-t*1000)/1000))
         Log.info("Playing next move: ", move)
+
+        last_wt = 0
+
+        def get_move_delay() -> float:
+            nonlocal t_, move, last_wt
+            p = stockfish.Stockfish.Piece
+            is_capturing = engine.get_what_is_on_square(move[2:])
+            piece = engine.get_what_is_on_square(move[:2])
+            is_pawn = piece == p.BLACK_PAWN or piece == p.WHITE_PAWN
+            if is_capturing or is_pawn:
+                last_wt = 0
+                return 0
+
+            wt_ = np.random.randint(0, 200) * random.randint(0, 1)
+            if last_wt != 0:
+                last_wt = 0
+                return wt_ / 1000
+            wt_ = wt_ if wt_ != 0 else random.randint(1000, 3000)
+            wt_ = min(wt_ * t_ / 0.1, timer_ // 4) / 1000
+            last_wt = wt_
+            return wt_
+
+        wt = (get_move_delay())
+        print(wt, last_wt)
+        sleep(wt)
+        timer_ -= (wt+t_) * 1000
+        print("Time left: ",timer_)
         try:
             play(driver, wait1, engine, move)
         except selenium.common.exceptions.ElementClickInterceptedException:
