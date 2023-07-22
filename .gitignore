@@ -1,3 +1,5 @@
+*.dat
+*.bkp
 *.log
 /tmp
 **/__pycache__

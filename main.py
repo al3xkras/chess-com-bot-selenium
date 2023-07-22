@@ -5,7 +5,7 @@ from time import time, sleep
 
 import numpy as np
 import selenium.common.exceptions
-import selenium.webdriver.common.devtools.v106 as devtools
+import selenium.webdriver.common.devtools.v112 as devtools
 import stockfish
 import trio
 from selenium import webdriver
@@ -13,9 +13,10 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
-from webdriver_manager.chrome import ChromeDriverManager
-
-import platform
+from selenium.webdriver.chrome.service import Service
+import platform, pickle
+import atexit
+import shutil
 
 game_timer = 1000 * 60
 timer_ = game_timer
@@ -42,6 +43,34 @@ location_override = {
 }
 
 moves_limit = 350
+cache = [{}, "./cache.dat", "./cache.dat.bkp", 5]
+
+
+def load_cache():
+    global cache
+    Log.info("Loading cache...")
+    if not os.path.isfile(cache[1]):
+        cache[0] = {}
+        return
+
+    def _cache_load():
+        global cache
+        with open(cache[1], "rb") as f:
+            cache[0] = pickle.load(f)
+            shutil.copyfile(cache[1], cache[2])
+
+    try:
+        _cache_load()
+    except:
+        shutil.copyfile(cache[2], cache[1])
+        _cache_load()
+
+
+def save_cache():
+    global cache
+    Log.info("Saving cache...")
+    with open(cache[1], "wb+") as f:
+        pickle.dump(cache[0], f)
 
 
 class C:
@@ -98,7 +127,8 @@ def setup_driver(profile_path=None):
         options.add_argument("--user-data-dir=" + profile_dir)
         options.add_argument("--profile-directory=Default")
 
-    chrome_driver = webdriver.Chrome(ChromeDriverManager().install(), options=options)
+    service = Service()
+    chrome_driver = webdriver.Chrome(service=service, options=options)
 
     chrome_driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
     chrome_driver.execute_cdp_cmd("Network.setUserAgentOverride", {
@@ -203,7 +233,8 @@ def actions(engine: stockfish.Stockfish, driver: webdriver.Chrome, session):
     # engine.set_elo_rating(2234)
 
     wait = WebDriverWait(driver, 120)
-    wait1 = WebDriverWait(driver, 5)
+    wait_5s = WebDriverWait(driver, 5)
+    wait_1s = WebDriverWait(driver, 1)
     if ask_confirmation:
         input("Press any key when you're ready to play")
 
@@ -212,17 +243,17 @@ def actions(engine: stockfish.Stockfish, driver: webdriver.Chrome, session):
 
     if not first_move_autoplay:
         Log.info("Waiting for a \"highlight\" element")
-        wait1.until(
+        wait_5s.until(
             lambda drv: len(drv.find_elements(By.CLASS_NAME, C.highlight)) >= 2
         )
     else:
         try:
             Log.info("Waiting for the \"board\"")
-            wait1.until(
+            wait_5s.until(
                 EC.element_to_be_clickable((By.CLASS_NAME, C.board))
             )
             Log.info("Waiting for the game to start")
-            wait1.until(
+            wait_5s.until(
                 EC.element_to_be_clickable((By.XPATH, C.board_xpath))
             )
         except selenium.common.exceptions.TimeoutException:
@@ -235,7 +266,7 @@ def actions(engine: stockfish.Stockfish, driver: webdriver.Chrome, session):
     is_black = C.flipped in board.get_attribute(C.class_)
     if is_black:
         Log.info("Waiting for a \"highlight\" element")
-        wait1.until(
+        wait_5s.until(
             lambda drv: len(drv.find_elements(By.CLASS_NAME, C.highlight)) >= 2
         )
 
@@ -295,7 +326,7 @@ def actions(engine: stockfish.Stockfish, driver: webdriver.Chrome, session):
         return any(x in mv for x in w)
 
     if not is_black:
-        play(driver, wait1, engine, first_move_if_playing_white)
+        play(driver, wait_1s, engine, first_move_if_playing_white)
         t1, t2 = get_last_move(driver)
         by_w_ = is_move_by_white(t1)
         Log.info("Last move by white: %s" % by_w_)
@@ -310,6 +341,19 @@ def actions(engine: stockfish.Stockfish, driver: webdriver.Chrome, session):
     else:
         t1, t2 = get_last_move(driver)
         engine.make_moves_from_current_position([t1 + t2])
+
+    def next_move(engine_: stockfish.Stockfish):
+        global cache
+        nonlocal loop_id
+        pos = engine_.get_fen_position()
+        mv = cache[0].get(pos, None)
+        if not mv:
+            mv = engine_.get_best_move()
+            if loop_id <= cache[3]:
+                cache[0][pos] = mv
+            return mv
+        Log.info("Playing cached move: %s" % mv)
+        return mv
 
     loop_id = 0
     # btime = 1000
@@ -330,7 +374,7 @@ def actions(engine: stockfish.Stockfish, driver: webdriver.Chrome, session):
         # print(i)
         #        move = engine.get_top_moves(i+1)[::-1][0]['Move'] if i>0 else engine.get_best_move()
         t_ = time()
-        move = engine.get_best_move()
+        move = next_move(engine)
         t_ = time() - t_
         # sleep(max(0,(i+1)*(btime-t*1000)/1000))
         Log.info("Playing next move: ", move)
@@ -356,13 +400,14 @@ def actions(engine: stockfish.Stockfish, driver: webdriver.Chrome, session):
             last_wt = wt_
             return wt_
 
-        wt = (get_move_delay())
+        wt = get_move_delay()
         print(wt, last_wt)
-        sleep(wt)
-        timer_ -= (wt+t_) * 1000
-        print("Time left: ",timer_)
+        if wt > 0:
+            sleep(wt)
+        timer_ -= (wt + t_) * 1000
+        print("Time left: ", timer_)
         try:
-            play(driver, wait1, engine, move)
+            play(driver, wait_1s, engine, move)
         except selenium.common.exceptions.ElementClickInterceptedException:
             game_over = True
         tile1 = str(let_to_num[move[0]]) + move[1]
@@ -382,6 +427,9 @@ def actions(engine: stockfish.Stockfish, driver: webdriver.Chrome, session):
 
 if __name__ == '__main__':
     async def main():
+        load_cache()
+        atexit.register(save_cache)
+
         driver = setup_driver()
         async with driver.bidi_connection() as session:
             engine = stockfish.Stockfish(path=os.getcwd() + stockfish_path)
