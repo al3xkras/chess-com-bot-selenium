@@ -24,12 +24,7 @@ timer_ = game_timer
 first_move_if_playing_white = "g1f3"
 first_move_autoplay = True
 
-if "win" in platform.platform().lower():
-    stockfish_path = "/stockfish/stockfish"
-elif "linux" in platform.platform().lower():
-    stockfish_path = "/stockfish/stockfish"
-else:
-    raise Exception("platform not supported: %s" % platform.platform())
+stockfish_path = "/stockfish/stockfish"
 
 url = "https://www.chess.com/"
 ask_confirmation = False
@@ -155,13 +150,17 @@ def get_last_move(driver: webdriver.Chrome):
         highlighted = highlighted[:2]
 
     first, second = highlighted
+
+    def swap():
+        nonlocal first, second
+        if cls.startswith(C.square) and cls in first.get_attribute(C.class_):
+            first, second = second, first
+            return True
+        return cls.startswith(C.square) and cls in second.get_attribute(C.class_)
+
     for piece in pieces_:
         for cls in piece.get_attribute(C.class_).split():
-            if cls.startswith(C.square) and cls in first.get_attribute(C.class_):
-                first, second = second, first
-                break
-            elif cls.startswith(C.square) and cls in second.get_attribute(C.class_):
-                break
+            if swap(): break
 
     f = lambda x: num_to_let[int(x[0])] + x[1]
 
@@ -236,7 +235,7 @@ def actions(engine: stockfish.Stockfish, driver: webdriver.Chrome, session):
     wait_5s = WebDriverWait(driver, 5)
     wait_1s = WebDriverWait(driver, 1)
     if ask_confirmation:
-        input("Press any key when you're ready to play")
+        input("Press enter when you're ready to play")
 
     game_over = False
     wait_10ms = WebDriverWait(driver, 0.01)
@@ -401,8 +400,8 @@ def actions(engine: stockfish.Stockfish, driver: webdriver.Chrome, session):
             return wt_
 
         wt = get_move_delay()
-        print(wt, last_wt)
         if wt > 0:
+            print(wt, last_wt)
             sleep(wt)
         timer_ -= (wt + t_) * 1000
         print("Time left: ", timer_)
