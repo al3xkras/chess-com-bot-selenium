@@ -1,5 +1,6 @@
 import os
 import random
+import sys
 import traceback
 from time import time, sleep
 
@@ -14,9 +15,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.chrome.service import Service
-import platform, pickle
-import atexit
-import shutil
+import logging
 
 game_timer = 1000 * 60
 timer_ = game_timer
@@ -24,7 +23,7 @@ timer_ = game_timer
 first_move_if_playing_white = "g1f3"
 first_move_autoplay = True
 
-stockfish_path = "/stockfish/stockfish"
+stockfish_path = "./stockfish/stockfish"
 
 url = "https://www.chess.com/"
 ask_confirmation = False
@@ -38,37 +37,11 @@ location_override = {
 }
 
 moves_limit = 350
-cache = [{}, "./cache.dat", "./cache.dat.bkp", 5]
-
-
-def load_cache():
-    global cache
-    Log.info("Loading cache...")
-    if not os.path.isfile(cache[1]):
-        cache[0] = {}
-        return
-
-    def _cache_load():
-        global cache
-        with open(cache[1], "rb") as f:
-            cache[0] = pickle.load(f)
-            shutil.copyfile(cache[1], cache[2])
-
-    try:
-        _cache_load()
-    except:
-        shutil.copyfile(cache[2], cache[1])
-        _cache_load()
-
-
-def save_cache():
-    global cache
-    Log.info("Saving cache...")
-    with open(cache[1], "wb+") as f:
-        pickle.dump(cache[0], f)
 
 
 class C:
+    user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " \
+                 "(KHTML, like Gecko) Chrome/83.0.4103.53 Safari/537.36"
     board = "board"
     flipped = "flipped"
     outerHTML = "outerHTML"
@@ -80,41 +53,79 @@ class C:
     board_xpath = "//div[@class='small-controls-rightIcons' or @class='live-game-buttons-component']"
     some_id = "p1234"
     promotion_moves = ["1", "8"]
+    scr_xpath = """
+_iter = document.evaluate('%s', document, null, 
+    XPathResult.UNORDERED_NODE_ITERATOR_TYPE, null);
+_lst = [];
+while(1) {
+    e = _iter.iterateNext();
+    if (!e) break;
+    _lst.push(e.getAttribute("class"));
+}
+return _lst
+""".strip()
+    xpath_highlight = f'//*[contains(@class,"{highlight}")]'
 
 
-class Log:
-    _debug = False
+class LogFormatter(logging.Formatter):
+    grey = "\x1b[38;20m"
+    yellow = "\x1b[33;20m"
+    green = "\x1b[32m"
+    blue = "\x1b[34m"
+    cyan = "\x1b[36m"
+    red = "\x1b[31;20m"
+    bold_red = "\x1b[31;1m"
+    reset = "\x1b[0m"
+    format = " %(asctime)s [%(name)s]: %(message)s (%(filename)s:%(lineno)d)"
 
-    @staticmethod
-    def info(*o):
-        print(*o)
+    FORMATS = {
+        logging.DEBUG:
+            reset + "%(asctime)s " +
+            yellow + "[%(levelname)s]" +
+            cyan + " [%(name)s," +
+            cyan + " %(filename)s:%(lineno)d]:" + reset +
+            grey + " %(message)s" + reset,
+        logging.INFO:
+            reset + "%(asctime)s " +
+            green + "[%(levelname)s] [" +
+            green + "%(name)s," +
+            green + " %(filename)s:%(lineno)d]" + reset +
+            grey + ": %(message)s" + reset,
+        logging.WARNING: yellow + format + reset,
+        logging.ERROR: red + format + reset,
+        logging.CRITICAL: bold_red + format + reset
+    }
+    DATE_FORMAT = '%Y-%m-%d %H:%M:%S'
 
-    @staticmethod
-    def error(*o):
-        print(o)
+    def format(self, record):
+        log_fmt = self.FORMATS.get(record.levelno)
+        formatter = logging.Formatter(log_fmt, datefmt=LogFormatter.DATE_FORMAT)
+        return formatter.format(record)
 
-    @classmethod
-    def debug(cls, *o):
-        if cls._debug:
-            print(o)
 
+stream = logging.StreamHandler(stream=sys.stdout)
+stream.setFormatter(LogFormatter())
+Log = logging.getLogger('chess-log')
+Log.setLevel(logging.INFO)
+Log.addHandler(stream)
+
+if not os.path.exists(stockfish_path):
+    Log.info("Consider copying the Stockfish binaries to "
+             "the ./stockfish directory of the project path.")
+    Log.info("The Stockfish binary name, must not contain a file extension, e.g. .exe/.sh")
+    raise FileNotFoundError(stockfish_path)
 
 def setup_driver(profile_path=None):
     options = Options()
     headless = False
     profile_dir = os.getcwd() + "/Profile/Selenium"
-
     options.add_argument("--ignore-certificate-errors")
     options.add_argument("--disable-web-security")
     options.add_argument("--mute-audio")
-    # options.set_capability("acceptInsecureCerts",True)
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option("useAutomationExtension", False)
-
     options.add_argument("--disable-blink-features=AutomationControlled")
-    # options.add_argument("--start-maximized")
-    # options.addExtensions(new File("./adblock.crx"));
-    # options.add_argument("--disable-popup-blocking")
+
     if headless:
         options.add_argument("--headless")
 
@@ -124,54 +135,50 @@ def setup_driver(profile_path=None):
 
     service = Service()
     chrome_driver = webdriver.Chrome(service=service, options=options)
-
     chrome_driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
     chrome_driver.execute_cdp_cmd("Network.setUserAgentOverride", {
-        "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.53 Safari/537.36"
+        "userAgent": C.user_agent
     })
-
     Log.info(chrome_driver.execute_script("return navigator.userAgent;"))
-
     return chrome_driver
 
 
 def get_last_move(driver: webdriver.Chrome):
-    pieces_ = driver.find_elements(By.CLASS_NAME, C.piece)
-    Log.debug("pieces: ", pieces_)
+    t_ = time()
     highlighted = driver.find_elements(By.CLASS_NAME, C.highlight)
-    Log.debug("highlighted: ", highlighted)
 
     if len(highlighted) < 2:
         Log.error("len(highlighted)<2")
         return "", ""
     if len(highlighted) > 2:
         Log.error("len(highlighted)>2")
-        print([x.get_attribute("outerHTML") for x in highlighted])
+        Log.error([x.get_attribute("outerHTML") for x in highlighted])
         highlighted = highlighted[:2]
 
     first, second = highlighted
 
-    def swap():
-        nonlocal first, second
-        if cls.startswith(C.square) and cls in first.get_attribute(C.class_):
-            first, second = second, first
-            return True
-        return cls.startswith(C.square) and cls in second.get_attribute(C.class_)
+    def get_tile_number(e) -> int:
+        return int(e.get_attribute("class")[-2:])
 
-    for piece in pieces_:
-        for cls in piece.get_attribute(C.class_).split():
-            if swap(): break
-
+    t1, t2 = tuple(get_tile_number(x) for x in highlighted)
+    piece_xpath = '//div[contains(@class,"piece") and (contains(@class, "%d") or contains(@class, "%d"))]' % (t1, t2)
+    piece = driver.find_element(By.XPATH, piece_xpath)
+    assert piece
+    if str(t1) in piece.get_attribute("class"):
+        first, second = second, first
     f = lambda x: num_to_let[int(x[0])] + x[1]
-
-    tile1 = [f(x.lstrip(C.square)) for x in first.get_attribute(C.class_).split() if x.startswith(C.square)][0]
-    tile2 = [f(x.lstrip(C.square)) for x in second.get_attribute(C.class_).split() if x.startswith(C.square)][0]
-    # piece_type = [x for x in second.get_attribute(C.class_).split() if len(x)==2][0]
-    # move_by,piece_type=piece_type[0],piece_type[1]
-    return tile1, tile2  # ,piece_type
+    _f = lambda element: (
+        f(x.lstrip(C.square)) for x in element.get_attribute(C.class_).split()
+        if x.startswith(C.square)
+    ).__iter__().__next__()
+    tile1, tile2 = _f(first), _f(second)
+    t_ = time() - t_
+    Log.info("get_last_move took %.5f" % t_)
+    return tile1, tile2
 
 
 def play(driver: webdriver.Chrome, wait: WebDriverWait, engine: stockfish.Stockfish, move):
+    t_ = time()
     engine.make_moves_from_current_position([move])
 
     pos0 = move[:2]
@@ -181,7 +188,6 @@ def play(driver: webdriver.Chrome, wait: WebDriverWait, engine: stockfish.Stockf
 
     cls = " ".join([C.piece, pos1, "wp", C.some_id])
 
-    Log.info("Adding a pointer")
     scr = """
     var board = document.getElementsByClassName('%s').item(0);
     var piece = document.createElement('div');
@@ -190,28 +196,19 @@ def play(driver: webdriver.Chrome, wait: WebDriverWait, engine: stockfish.Stockf
     board.appendChild(piece);
     """ % (C.board, cls)
     driver.execute_script(scr)
-    Log.info("Pointer added")
-
-    Log.info("Playing next move...")
     # sleep(1)
     e0 = wait.until(EC.element_to_be_clickable((By.CLASS_NAME, pos0)))
     e0.click()
-    Log.info("First tile clicked...")
     # sleep(0.05)
     e1 = wait.until(EC.element_to_be_clickable((By.CLASS_NAME, C.some_id)))
     e1.click()
-    Log.info("Second tile clicked...")
-
     # sleep(1)
-    Log.info("The move is played")
-    Log.info("Removing the pointer...")
     scr1 = """
     var board = document.getElementsByClassName('board').item(0);
     var to_rm = document.getElementsByClassName('%s').item(0);
     board.removeChild(to_rm)
     """ % C.some_id
     driver.execute_script(scr1)
-
     w = WebDriverWait(driver, 0.05)
     try:
         window = w.until(EC.visibility_of_element_located((By.CLASS_NAME, "promotion-window")))
@@ -222,8 +219,8 @@ def play(driver: webdriver.Chrome, wait: WebDriverWait, engine: stockfish.Stockf
         items[0].click()
     except selenium.common.exceptions.TimeoutException:
         pass
-
-    Log.info("next move")
+    t_ = time() - t_
+    Log.info("play took %.5f" % t_)
 
 
 def actions(engine: stockfish.Stockfish, driver: webdriver.Chrome, session):
@@ -238,7 +235,6 @@ def actions(engine: stockfish.Stockfish, driver: webdriver.Chrome, session):
         input("Press enter when you're ready to play")
 
     game_over = False
-    wait_10ms = WebDriverWait(driver, 0.01)
 
     if not first_move_autoplay:
         Log.info("Waiting for a \"highlight\" element")
@@ -271,51 +267,32 @@ def actions(engine: stockfish.Stockfish, driver: webdriver.Chrome, session):
 
     Log.info("Is playing black pieces: %s" % is_black)
 
-    def f(elements, cls):
-        return any(cls in x.get_attribute(C.outerHTML) for x in elements)
+    def f(cls_lst, cls):
+        return any(cls in x for x in cls_lst)
 
     def op_move(drv: selenium.webdriver.Chrome, last_tiles):
         nonlocal game_over
-        try:
-            modal1 = "board-modal-modal"
-            modal2 = "game-over-modal"
-            xpath = "//div[@class='%s' or @id='%s']" % (modal1, modal2)
-            wait_10ms.until(EC.element_to_be_clickable((By.XPATH, xpath)))
-
-            # game_over = True
-        except selenium.common.exceptions.TimeoutException:
-            pass
-        elements = drv.find_elements(By.CLASS_NAME, C.highlight)
-        return game_over or not (f(elements, last_tiles[0]) and f(elements, last_tiles[1]))
+        cls_lst = drv.execute_script(C.scr_xpath % C.xpath_highlight)
+        return game_over or not all(f(cls_lst, x) for x in last_tiles)
 
     def wait_op(last_tiles) -> bool:
+        nonlocal game_over
         wait.until(lambda drv: op_move(drv, last_tiles))
         if game_over:
             Log.info("game over")
             return True
-        # op_time = time() - op_time
-        # btime = abs(np.random.normal(loc=max(0,time_avg-btime),scale=op_time*time_std))
-        # sleep(0.1)
-        t1, t2 = get_last_move(driver)
-        move_ = t1 + t2
-
-        Log.info("Opponent's move: ", move_)
+        move_ = "".join(get_last_move(driver))
+        Log.info("Opponent's move: %s", move_)
         make_move(move_)
-
         return False
 
     def make_move(move_, ignore_err=False):
         try:
             engine.make_moves_from_current_position([move_])
-        except ValueError as e:
+        except ValueError:
             Log.error(engine.get_fen_position())
-            if move_[3] in C.promotion_moves:
-                Log.error("not implemented")
-                # move_ += "q"
-            if ignore_err:
-                Log.error(traceback.format_exc())
-            else:
-                raise e
+            move_ = move_[2:]+move_[:2]
+            engine.make_moves_from_current_position([move_])
 
     def move_fmt(move_):
         return str(let_to_num[move_[0]]) + move_[1]
@@ -328,7 +305,7 @@ def actions(engine: stockfish.Stockfish, driver: webdriver.Chrome, session):
         play(driver, wait_1s, engine, first_move_if_playing_white)
         t1, t2 = get_last_move(driver)
         by_w_ = is_move_by_white(t1)
-        Log.info("Last move by white: %s" % by_w_)
+        Log.info("Is last move played by white: %s" % by_w_)
         if by_w_:
             if not first_move_autoplay:
                 engine.make_moves_from_current_position([t1 + t2])
@@ -342,41 +319,22 @@ def actions(engine: stockfish.Stockfish, driver: webdriver.Chrome, session):
         engine.make_moves_from_current_position([t1 + t2])
 
     def next_move(engine_: stockfish.Stockfish):
-        global cache
-        nonlocal loop_id
-        pos = engine_.get_fen_position()
-        mv = cache[0].get(pos, None)
-        if not mv:
-            mv = engine_.get_best_move()
-            if loop_id <= cache[3]:
-                cache[0][pos] = mv
-            return mv
-        Log.info("Playing cached move: %s" % mv)
+        _ = time()
+        mv = engine_.get_best_move()
+        _ = time() - _
+        Log.debug("next_move took %.5f" % _)
         return mv
 
     loop_id = 0
-    # btime = 1000
-    # time_std = 750
-    # time_avg = 350
     while loop_id < moves_limit:
         loop_id += 1
-        # t=time()
-        # m_count=2
         n_moves = 4
         p = np.array([1 / loop_id ** (_ - 1.2) for _ in range(1, n_moves + 1)])
         p /= np.sum(p)
-        i = np.random.choice([0, 1, 2, 3], p=p)
-        # w=np.random.choice([1,1.3,2,2],p=[0.6,0.2,0.1,0.1])
-        # if i-1>0 and loop_id>3:
-        # sleep((i-1)*w)
-        # Log.info(i)
-        # print(i)
-        #        move = engine.get_top_moves(i+1)[::-1][0]['Move'] if i>0 else engine.get_best_move()
         t_ = time()
         move = next_move(engine)
         t_ = time() - t_
-        # sleep(max(0,(i+1)*(btime-t*1000)/1000))
-        Log.info("Playing next move: ", move)
+        Log.info("Playing next move: %s", move)
 
         last_wt = 0
 
@@ -401,10 +359,9 @@ def actions(engine: stockfish.Stockfish, driver: webdriver.Chrome, session):
 
         wt = get_move_delay()
         if wt > 0:
-            print(wt, last_wt)
-            sleep(wt)
+            Log.debug(wt, last_wt)
+            # sleep(wt)
         timer_ -= (wt + t_) * 1000
-        print("Time left: ", timer_)
         try:
             play(driver, wait_1s, engine, move)
         except selenium.common.exceptions.ElementClickInterceptedException:
@@ -413,21 +370,14 @@ def actions(engine: stockfish.Stockfish, driver: webdriver.Chrome, session):
         tile2 = str(let_to_num[move[2]]) + move[3]
         cls1 = C.square + tile1
         cls2 = C.square + tile2
-
-        Log.info("The move is played")
         Log.info("Waiting for opponent's move")
-        # sleep(0.1)
-
         if wait_op([cls1, cls2]):
             return True
-
     return False
 
 
 if __name__ == '__main__':
     async def main():
-        load_cache()
-        atexit.register(save_cache)
 
         driver = setup_driver()
         async with driver.bidi_connection() as session:
@@ -441,6 +391,8 @@ if __name__ == '__main__':
                 try:
                     return actions(engine, driver, session)
                 except Exception as e:
+                    if isinstance(e, KeyboardInterrupt):
+                        raise e
                     exc = traceback.format_exc()
                     print(exc)
                     return True
