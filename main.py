@@ -291,6 +291,7 @@ def actions(engine: stockfish.Stockfish, driver: webdriver.Chrome, session):
             engine.make_moves_from_current_position([move_])
         except ValueError:
             Log.error(engine.get_fen_position())
+            move_ = move_[:4]
             move_ = move_[2:]+move_[:2]
             engine.make_moves_from_current_position([move_])
 
@@ -341,7 +342,7 @@ def actions(engine: stockfish.Stockfish, driver: webdriver.Chrome, session):
         def get_move_delay() -> float:
             nonlocal t_, move, last_wt
             p = stockfish.Stockfish.Piece
-            is_capturing = engine.get_what_is_on_square(move[2:])
+            is_capturing = engine.get_what_is_on_square(move[2:4])
             piece = engine.get_what_is_on_square(move[:2])
             is_pawn = piece == p.BLACK_PAWN or piece == p.WHITE_PAWN
             if is_capturing or is_pawn:
