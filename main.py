@@ -6,7 +6,7 @@ from time import time, sleep
 
 import numpy as np
 import selenium.common.exceptions
-import selenium.webdriver.common.devtools.v112 as devtools
+import selenium.webdriver.common.devtools.v114 as devtools
 import stockfish
 import trio
 from selenium import webdriver
