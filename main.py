@@ -24,8 +24,8 @@ timer_ = game_timer
 elo_rating_ = -1
 first_move_if_playing_white = "e2e4"
 first_move_autoplay = True
-
-stockfish_path = "./stockfish/stockfish"
+stockfish_dir = "./stockfish"
+stockfish_path = stockfish_dir+"/stockfish"
 
 url = "https://www.chess.com/"
 move_delay = True
@@ -134,6 +134,7 @@ if not os.path.exists(stockfish_path):
     Log.info("Consider copying the Stockfish binaries to "
              "the ./stockfish directory of the project path.")
     Log.info("The Stockfish binary name, must not contain a file extension, e.g. .exe/.sh")
+    os.mkdir(stockfish_dir)
     raise FileNotFoundError(stockfish_path)
 
 
