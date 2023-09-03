@@ -16,27 +16,27 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.chrome.service import Service
 import logging
+import typer
 
 game_timer = 1000 * 60
 timer_ = game_timer
 
-first_move_if_playing_white = "g1f3"
+elo_rating_ = -1
+first_move_if_playing_white = "e2e4"
 first_move_autoplay = True
 
 stockfish_path = "./stockfish/stockfish"
 
 url = "https://www.chess.com/"
-ask_confirmation = False
+move_delay = True
 
-num_to_let = dict(zip(range(1, 9), "abcdefgh"))
-let_to_num = dict(zip("abcdefgh", range(1, 9)))
+moves_limit = 350
 
-location_override = {
+location_override = True
+location = {
     "latitude": 48.8781,
     "longitude": -28.6298
 }
-
-moves_limit = 350
 
 
 class C:
@@ -50,6 +50,7 @@ class C:
     hover = "hover-"
     highlight = "highlight"
     class_ = "class"
+    space = " "
     board_xpath = "//div[@class='small-controls-rightIcons' or @class='live-game-buttons-component']"
     some_id = "p1234"
     promotion_moves = ["1", "8"]
@@ -65,6 +66,26 @@ while(1) {
 return _lst
 """.strip()
     xpath_highlight = f'//*[contains(@class,"{highlight}")]'
+    xpath_piece = '//div[contains(@class,"piece") and (contains(@class, "%d") or contains(@class, "%d"))]'
+    js_add_ptr = """
+    var board = document.getElementsByClassName('%s').item(0);
+    var piece = document.createElement('div');
+
+    piece.setAttribute('class', '%s');
+    board.appendChild(piece);
+    """
+    js_rm_ptr = """
+    var board = document.getElementsByClassName('board').item(0);
+    var to_rm = document.getElementsByClassName('%s').item(0);
+    board.removeChild(to_rm)
+    """
+    white_pawn = "wp"
+    black_queen = "bq"
+    white_queen = "wq"
+    promotion_window = "promotion-window"
+    promotion_move_queen = "q"
+    num_to_let = dict(zip(range(1, 9), "abcdefgh"))
+    let_to_num = dict((v, k) for k, v in num_to_let.items())
 
 
 class LogFormatter(logging.Formatter):
@@ -106,7 +127,7 @@ class LogFormatter(logging.Formatter):
 stream = logging.StreamHandler(stream=sys.stdout)
 stream.setFormatter(LogFormatter())
 Log = logging.getLogger('chess-log')
-Log.setLevel(logging.INFO)
+Log.setLevel(logging.DEBUG)
 Log.addHandler(stream)
 
 if not os.path.exists(stockfish_path):
@@ -114,6 +135,7 @@ if not os.path.exists(stockfish_path):
              "the ./stockfish directory of the project path.")
     Log.info("The Stockfish binary name, must not contain a file extension, e.g. .exe/.sh")
     raise FileNotFoundError(stockfish_path)
+
 
 def setup_driver(profile_path=None):
     options = Options()
@@ -158,15 +180,15 @@ def get_last_move(driver: webdriver.Chrome):
     first, second = highlighted
 
     def get_tile_number(e) -> int:
-        return int(e.get_attribute("class")[-2:])
+        return int(e.get_attribute(C.class_)[-2:])
 
     t1, t2 = tuple(get_tile_number(x) for x in highlighted)
-    piece_xpath = '//div[contains(@class,"piece") and (contains(@class, "%d") or contains(@class, "%d"))]' % (t1, t2)
+    piece_xpath = C.xpath_piece % (t1, t2)
     piece = driver.find_element(By.XPATH, piece_xpath)
     assert piece
-    if str(t1) in piece.get_attribute("class"):
+    if str(t1) in piece.get_attribute(C.class_):
         first, second = second, first
-    f = lambda x: num_to_let[int(x[0])] + x[1]
+    f = lambda x: C.num_to_let[int(x[0])] + x[1]
     _f = lambda element: (
         f(x.lstrip(C.square)) for x in element.get_attribute(C.class_).split()
         if x.startswith(C.square)
@@ -180,42 +202,26 @@ def get_last_move(driver: webdriver.Chrome):
 def play(driver: webdriver.Chrome, wait: WebDriverWait, engine: stockfish.Stockfish, move):
     t_ = time()
     engine.make_moves_from_current_position([move])
-
     pos0 = move[:2]
     pos1 = move[2:]
-    pos0 = C.square + str(let_to_num[pos0[0]]) + pos0[1]
-    pos1 = C.square + str(let_to_num[pos1[0]]) + pos1[1]
-
-    cls = " ".join([C.piece, pos1, "wp", C.some_id])
-
-    scr = """
-    var board = document.getElementsByClassName('%s').item(0);
-    var piece = document.createElement('div');
-
-    piece.setAttribute('class', '%s');
-    board.appendChild(piece);
-    """ % (C.board, cls)
+    pos0 = C.square + str(C.let_to_num[pos0[0]]) + pos0[1]
+    pos1 = C.square + str(C.let_to_num[pos1[0]]) + pos1[1]
+    cls = C.space.join([C.piece, pos1, C.white_pawn, C.some_id])
+    scr = C.js_add_ptr % (C.board, cls)
     driver.execute_script(scr)
-    # sleep(1)
     e0 = wait.until(EC.element_to_be_clickable((By.CLASS_NAME, pos0)))
     e0.click()
-    # sleep(0.05)
     e1 = wait.until(EC.element_to_be_clickable((By.CLASS_NAME, C.some_id)))
     e1.click()
-    # sleep(1)
-    scr1 = """
-    var board = document.getElementsByClassName('board').item(0);
-    var to_rm = document.getElementsByClassName('%s').item(0);
-    board.removeChild(to_rm)
-    """ % C.some_id
+    scr1 = C.js_rm_ptr % C.some_id
     driver.execute_script(scr1)
     w = WebDriverWait(driver, 0.05)
     try:
-        window = w.until(EC.visibility_of_element_located((By.CLASS_NAME, "promotion-window")))
+        window = w.until(EC.visibility_of_element_located((By.CLASS_NAME, C.promotion_window)))
         sleep(0.2)
-        items = window.find_elements(By.CLASS_NAME, "bq")
+        items = window.find_elements(By.CLASS_NAME, C.black_queen)
         if len(items) == 0:
-            items = window.find_elements(By.CLASS_NAME, "wq")
+            items = window.find_elements(By.CLASS_NAME, C.white_queen)
         items[0].click()
     except selenium.common.exceptions.TimeoutException:
         pass
@@ -226,13 +232,11 @@ def play(driver: webdriver.Chrome, wait: WebDriverWait, engine: stockfish.Stockf
 def actions(engine: stockfish.Stockfish, driver: webdriver.Chrome, session):
     global timer_
     engine.set_fen_position("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", True)
-    # engine.set_elo_rating(2234)
-
+    if elo_rating_ > 0:
+        engine.set_elo_rating(elo_rating_)
     wait = WebDriverWait(driver, 120)
     wait_5s = WebDriverWait(driver, 5)
     wait_1s = WebDriverWait(driver, 1)
-    if ask_confirmation:
-        input("Press enter when you're ready to play")
 
     game_over = False
 
@@ -275,9 +279,14 @@ def actions(engine: stockfish.Stockfish, driver: webdriver.Chrome, session):
         cls_lst = drv.execute_script(C.scr_xpath % C.xpath_highlight)
         return game_over or not all(f(cls_lst, x) for x in last_tiles)
 
+    op_move_time = 0
+
     def wait_op(last_tiles) -> bool:
-        nonlocal game_over
+        nonlocal game_over, op_move_time
+        t1_ = time()
         wait.until(lambda drv: op_move(drv, last_tiles))
+        op_move_time = time() - t1_
+        Log.debug("op_move_time = %.3f", op_move_time)
         if game_over:
             Log.info("game over")
             return True
@@ -286,17 +295,22 @@ def actions(engine: stockfish.Stockfish, driver: webdriver.Chrome, session):
         make_move(move_)
         return False
 
-    def make_move(move_, ignore_err=False):
+    def make_move(move_):
         try:
             engine.make_moves_from_current_position([move_])
         except ValueError:
             Log.error(engine.get_fen_position())
-            move_ = move_[:4]
-            move_ = move_[2:]+move_[:2]
+            try:
+                if not move_.endswith(C.promotion_move_queen):
+                    make_move(move_ + C.promotion_move_queen)
+                    return
+            except ValueError:
+                pass
+            move_ = move_[2:4] + move_[:2]
             engine.make_moves_from_current_position([move_])
 
     def move_fmt(move_):
-        return str(let_to_num[move_[0]]) + move_[1]
+        return str(C.let_to_num[move_[0]]) + move_[1]
 
     def is_move_by_white(mv):
         w = ["1", "2", "3", "4"]
@@ -323,52 +337,53 @@ def actions(engine: stockfish.Stockfish, driver: webdriver.Chrome, session):
         _ = time()
         mv = engine_.get_best_move()
         _ = time() - _
-        Log.debug("next_move took %.5f" % _)
+        Log.info("next_move took %.5f" % _)
         return mv
 
+    last_wt = 0.0
+    Piece = stockfish.Stockfish.Piece
+
+    def get_move_delay(stockfish_time) -> float:
+        nonlocal move, last_wt
+        r_ = elo_rating_ if elo_rating_ > 0 else 2500
+        is_capturing = engine.get_what_is_on_square(move[2:4])
+        piece = engine.get_what_is_on_square(move[:2])
+        is_pawn = piece == Piece.BLACK_PAWN or piece == Piece.WHITE_PAWN
+        if is_capturing or is_pawn:
+            last_wt = max(0.0, last_wt - last_wt / random.randint(1, 3) - 2)
+            return abs(random.random() / 3) * r_ / 2500
+        wt_ = random.randint(0, 200) * random.randint(0, 1)
+        if last_wt != 0:
+            last_wt = max(0.0, last_wt - last_wt / random.randint(1, 3) - 2)
+            return (abs(random.random() / 4) + op_move_time * abs(random.random() / 2)) * game_timer / 60000 * r_ / 2500
+        wt_ = wt_ if wt_ != 0 else random.randint(1000, 3000)
+        wt_ = min(wt_ * stockfish_time * 6, timer_ // 8) / 1000
+        wt_ = min(random.randint(2, 7), wt_)
+        if last_wt == 0:
+            last_wt = wt_
+        return (wt_ + op_move_time * abs(random.random() / 2) + abs(
+            random.random() / 2)) * game_timer / 60000 * r_ / 2500
+
     loop_id = 0
+
     while loop_id < moves_limit:
         loop_id += 1
-        n_moves = 4
-        p = np.array([1 / loop_id ** (_ - 1.2) for _ in range(1, n_moves + 1)])
-        p /= np.sum(p)
         t_ = time()
         move = next_move(engine)
         t_ = time() - t_
+        wt = 0
         Log.info("Playing next move: %s", move)
-
-        last_wt = 0
-
-        def get_move_delay() -> float:
-            nonlocal t_, move, last_wt
-            p = stockfish.Stockfish.Piece
-            is_capturing = engine.get_what_is_on_square(move[2:4])
-            piece = engine.get_what_is_on_square(move[:2])
-            is_pawn = piece == p.BLACK_PAWN or piece == p.WHITE_PAWN
-            if is_capturing or is_pawn:
-                last_wt = 0
-                return 0
-
-            wt_ = np.random.randint(0, 200) * random.randint(0, 1)
-            if last_wt != 0:
-                last_wt = 0
-                return wt_ / 1000
-            wt_ = wt_ if wt_ != 0 else random.randint(1000, 3000)
-            wt_ = min(wt_ * t_ / 0.1, timer_ // 4) / 1000
-            last_wt = wt_
-            return wt_
-
-        wt = get_move_delay()
-        if wt > 0:
-            Log.debug(wt, last_wt)
-            # sleep(wt)
+        if move_delay:
+            wt = get_move_delay(t_)
+            Log.debug("wt=%.3f last_wt=%.3f", wt, last_wt)
+            sleep(wt)
         timer_ -= (wt + t_) * 1000
         try:
             play(driver, wait_1s, engine, move)
         except selenium.common.exceptions.ElementClickInterceptedException:
             game_over = True
-        tile1 = str(let_to_num[move[0]]) + move[1]
-        tile2 = str(let_to_num[move[2]]) + move[3]
+        tile1 = str(C.let_to_num[move[0]]) + move[1]
+        tile2 = str(C.let_to_num[move[2]]) + move[3]
         cls1 = C.square + tile1
         cls2 = C.square + tile2
         Log.info("Waiting for opponent's move")
@@ -377,34 +392,56 @@ def actions(engine: stockfish.Stockfish, driver: webdriver.Chrome, session):
     return False
 
 
-if __name__ == '__main__':
-    async def main():
-
-        driver = setup_driver()
-        async with driver.bidi_connection() as session:
-            engine = stockfish.Stockfish(path=os.getcwd() + stockfish_path)
-            Log.info("Selenium CDP session open")
-            cdpSession = session.session
+async def main0():
+    driver = setup_driver()
+    async with driver.bidi_connection() as session:
+        engine = stockfish.Stockfish(path=os.getcwd() + stockfish_path)
+        Log.info("Selenium CDP session open")
+        cdpSession = session.session
+        if location_override:
             await cdpSession.execute(
-                devtools.emulation.set_geolocation_override(**location_override, accuracy=95))
+                devtools.emulation.set_geolocation_override(**location, accuracy=95))
 
-            def loop():
-                try:
-                    return actions(engine, driver, session)
-                except Exception as e:
-                    if isinstance(e, KeyboardInterrupt):
-                        raise e
-                    exc = traceback.format_exc()
-                    print(exc)
-                    return True
+        def loop():
+            try:
+                return actions(engine, driver, session)
+            except Exception as e:
+                if isinstance(e, KeyboardInterrupt):
+                    raise e
+                exc = traceback.format_exc()
+                print(exc)
+                return True
 
-            driver.get(url)
-            while loop():
-                sleep(0.5)
-            s = 10
-            Log.info("Closing Selenium WebDriver in %s seconds" % s)
-            sleep(s)
-            driver.quit()
+        driver.get(url)
+        while loop():
+            sleep(0.5)
+        s = 10
+        Log.info("Closing Selenium WebDriver in %s seconds" % s)
+        sleep(s)
+        driver.quit()
 
 
-    trio.run(main)
+def main(elo_rating=-1, game_timer_ms: int = 300000, first_move_w: str = "e2e4", enable_move_delay: bool = False,
+         override_location=True,
+         location_lat: float = 48.8781,
+         location_lon: float = -28.6298):
+    global game_timer, first_move_if_playing_white, first_move_autoplay, \
+        move_delay, moves_limit, location, location_override, elo_rating_
+
+    game_timer = int(game_timer_ms)
+    first_move_autoplay = first_move_w is not None and len(first_move_w) == 4
+    first_move_if_playing_white = first_move_w
+
+    move_delay = enable_move_delay
+    location_override = bool(override_location)
+    elo_rating_ = int(elo_rating)
+
+    location = {
+        "latitude": float(location_lat),
+        "longitude": float(location_lon)
+    }
+    trio.run(main0)
+
+
+if __name__ == '__main__':
+    typer.run(main)
