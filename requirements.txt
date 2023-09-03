@@ -2,3 +2,4 @@ selenium~=4.11.2
 trio~=0.22.0
 stockfish
 numpy
+typer
