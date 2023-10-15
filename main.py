@@ -7,6 +7,8 @@ from time import time, sleep
 import numpy as np
 import selenium.common.exceptions
 import selenium.webdriver.common.devtools.v114 as devtools
+from selenium.webdriver.remote.webelement import WebElement
+
 import stockfish
 import trio
 from selenium import webdriver
@@ -25,7 +27,7 @@ elo_rating_ = -1
 first_move_if_playing_white = "e2e4"
 first_move_autoplay = True
 stockfish_dir = "./stockfish"
-stockfish_path = stockfish_dir+"/stockfish"
+stockfish_path = stockfish_dir + "/stockfish"
 
 url = "https://www.chess.com/"
 move_delay = True
@@ -75,9 +77,11 @@ return _lst
     board.appendChild(piece);
     """
     js_rm_ptr = """
-    var board = document.getElementsByClassName('board').item(0);
-    var to_rm = document.getElementsByClassName('%s').item(0);
-    board.removeChild(to_rm)
+    const board = document.getElementsByClassName('%s').item(0);
+    const to_rm = document.getElementsByClassName('%s');
+    for (var i = 0; i < to_rm.length; i++) {
+       board.removeChild(to_rm.item(i));
+    }
     """
     white_pawn = "wp"
     black_queen = "bq"
@@ -165,6 +169,12 @@ def setup_driver(profile_path=None):
     Log.info(chrome_driver.execute_script("return navigator.userAgent;"))
     return chrome_driver
 
+def is_stale_ref(e: WebElement):
+    try:
+        e.is_enabled()
+        return False
+    except selenium.common.exceptions.StaleElementReferenceException:
+        return True
 
 def get_last_move(driver: webdriver.Chrome):
     t_ = time()
@@ -172,7 +182,7 @@ def get_last_move(driver: webdriver.Chrome):
 
     if len(highlighted) < 2:
         Log.error("len(highlighted)<2")
-        return "", ""
+        raise RuntimeError
     if len(highlighted) > 2:
         Log.error("len(highlighted)>2")
         Log.error([x.get_attribute("outerHTML") for x in highlighted])
@@ -200,7 +210,7 @@ def get_last_move(driver: webdriver.Chrome):
     return tile1, tile2
 
 
-def play(driver: webdriver.Chrome, wait: WebDriverWait, engine: stockfish.Stockfish, move):
+def play(driver: webdriver.Chrome, wait: WebDriverWait, engine: stockfish.Stockfish, move, is_black):
     t_ = time()
     engine.make_moves_from_current_position([move])
     pos0 = move[:2]
@@ -208,14 +218,15 @@ def play(driver: webdriver.Chrome, wait: WebDriverWait, engine: stockfish.Stockf
     pos0 = C.square + str(C.let_to_num[pos0[0]]) + pos0[1]
     pos1 = C.square + str(C.let_to_num[pos1[0]]) + pos1[1]
     cls = C.space.join([C.piece, pos1, C.white_pawn, C.some_id])
-    scr = C.js_add_ptr % (C.board, cls)
-    driver.execute_script(scr)
+    scr_rm = C.js_rm_ptr % (C.board, C.some_id)
+    scr_add = C.js_add_ptr % (C.board, cls)
+    driver.execute_script(scr_rm)
+    driver.execute_script(scr_add)
     e0 = wait.until(EC.element_to_be_clickable((By.CLASS_NAME, pos0)))
     e0.click()
     e1 = wait.until(EC.element_to_be_clickable((By.CLASS_NAME, C.some_id)))
     e1.click()
-    scr1 = C.js_rm_ptr % C.some_id
-    driver.execute_script(scr1)
+    driver.execute_script(scr_rm)
     w = WebDriverWait(driver, 0.05)
     try:
         window = w.until(EC.visibility_of_element_located((By.CLASS_NAME, C.promotion_window)))
@@ -318,7 +329,7 @@ def actions(engine: stockfish.Stockfish, driver: webdriver.Chrome, session):
         return any(x in mv for x in w)
 
     if not is_black:
-        play(driver, wait_1s, engine, first_move_if_playing_white)
+        play(driver, wait_1s, engine, first_move_if_playing_white, is_black)
         t1, t2 = get_last_move(driver)
         by_w_ = is_move_by_white(t1)
         Log.info("Is last move played by white: %s" % by_w_)
@@ -380,7 +391,7 @@ def actions(engine: stockfish.Stockfish, driver: webdriver.Chrome, session):
             sleep(wt)
         timer_ -= (wt + t_) * 1000
         try:
-            play(driver, wait_1s, engine, move)
+            play(driver, wait_1s, engine, move, is_black)
         except selenium.common.exceptions.ElementClickInterceptedException:
             game_over = True
         tile1 = str(C.let_to_num[move[0]]) + move[1]
