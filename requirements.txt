@@ -1,5 +1,4 @@
 selenium~=4.11.2
 trio~=0.22.0
 stockfish~=3.28.0
-numpy~=1.24.3
 typer~=0.9.0
