@@ -4,42 +4,23 @@ import sys
 import traceback
 from time import time, sleep
 
-import numpy as np
+import logging
 import selenium.common.exceptions
 import selenium.webdriver.common.devtools.v114 as devtools
-from selenium.webdriver.remote.webelement import WebElement
-
-import stockfish
 import trio
+import typer
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.chrome.service import Service
-import logging
-import typer
 
-game_timer = 1000 * 60
-timer_ = game_timer
-
-elo_rating_ = -1
-first_move_if_playing_white = "e2e4"
-first_move_autoplay = True
-stockfish_dir = "./stockfish"
-stockfish_path = stockfish_dir + "/stockfish"
+import stockfish
 
 url = "https://www.chess.com/"
-move_delay = True
-
-moves_limit = 350
-
-location_override = True
-location = {
-    "latitude": 48.8781,
-    "longitude": -28.6298
-}
-
+stockfish_dir = "./stockfish"
+stockfish_path = stockfish_dir + "/stockfish"
 
 class C:
     user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " \
@@ -57,16 +38,16 @@ class C:
     some_id = "p1234"
     promotion_moves = ["1", "8"]
     scr_xpath = """
-_iter = document.evaluate('%s', document, null, 
-    XPathResult.UNORDERED_NODE_ITERATOR_TYPE, null);
-_lst = [];
-while(1) {
-    e = _iter.iterateNext();
-    if (!e) break;
-    _lst.push(e.getAttribute("class"));
-}
-return _lst
-""".strip()
+    _iter = document.evaluate('%s', document, null, 
+        XPathResult.UNORDERED_NODE_ITERATOR_TYPE, null);
+    _lst = [];
+    while(1) {
+        e = _iter.iterateNext();
+        if (!e) break;
+        _lst.push(e.getAttribute("class"));
+    }
+    return _lst
+    """.strip()
     xpath_highlight = f'//*[contains(@class,"{highlight}")]'
     xpath_piece = '//div[contains(@class,"piece") and (contains(@class, "%d") or contains(@class, "%d"))]'
     js_add_ptr = """
@@ -142,25 +123,16 @@ if not os.path.exists(stockfish_path):
     raise FileNotFoundError(stockfish_path)
 
 
-def setup_driver(profile_path=None):
-    options = Options()
-    headless = False
+def setup_driver():
     profile_dir = os.getcwd() + "/Profile/Selenium"
-    options.add_argument("--ignore-certificate-errors")
-    options.add_argument("--disable-web-security")
+    options = Options()
+    service = Service()
     options.add_argument("--mute-audio")
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option("useAutomationExtension", False)
     options.add_argument("--disable-blink-features=AutomationControlled")
-
-    if headless:
-        options.add_argument("--headless")
-
-    if profile_dir:
-        options.add_argument("--user-data-dir=" + profile_dir)
-        options.add_argument("--profile-directory=Default")
-
-    service = Service()
+    options.add_argument("--user-data-dir=" + profile_dir)
+    options.add_argument("--profile-directory=Default")
     chrome_driver = webdriver.Chrome(service=service, options=options)
     chrome_driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
     chrome_driver.execute_cdp_cmd("Network.setUserAgentOverride", {
@@ -168,13 +140,6 @@ def setup_driver(profile_path=None):
     })
     Log.info(chrome_driver.execute_script("return navigator.userAgent;"))
     return chrome_driver
-
-def is_stale_ref(e: WebElement):
-    try:
-        e.is_enabled()
-        return False
-    except selenium.common.exceptions.StaleElementReferenceException:
-        return True
 
 def get_last_move(driver: webdriver.Chrome):
     t_ = time()
@@ -206,11 +171,11 @@ def get_last_move(driver: webdriver.Chrome):
     ).__iter__().__next__()
     tile1, tile2 = _f(first), _f(second)
     t_ = time() - t_
-    Log.info("get_last_move took %.5f" % t_)
+    Log.debug("get_last_move took %.5f" % t_)
     return tile1, tile2
 
 
-def play(driver: webdriver.Chrome, wait: WebDriverWait, engine: stockfish.Stockfish, move, is_black):
+def play(driver: webdriver.Chrome, wait: WebDriverWait, engine: stockfish.Stockfish, move):
     t_ = time()
     engine.make_moves_from_current_position([move])
     pos0 = move[:2]
@@ -238,7 +203,7 @@ def play(driver: webdriver.Chrome, wait: WebDriverWait, engine: stockfish.Stockf
     except selenium.common.exceptions.TimeoutException:
         pass
     t_ = time() - t_
-    Log.info("play took %.5f" % t_)
+    Log.debug("play took %.5f" % t_)
 
 
 def actions(engine: stockfish.Stockfish, driver: webdriver.Chrome, session):
@@ -329,7 +294,7 @@ def actions(engine: stockfish.Stockfish, driver: webdriver.Chrome, session):
         return any(x in mv for x in w)
 
     if not is_black:
-        play(driver, wait_1s, engine, first_move_if_playing_white, is_black)
+        play(driver, wait_1s, engine, first_move_if_playing_white)
         t1, t2 = get_last_move(driver)
         by_w_ = is_move_by_white(t1)
         Log.info("Is last move played by white: %s" % by_w_)
@@ -391,7 +356,7 @@ def actions(engine: stockfish.Stockfish, driver: webdriver.Chrome, session):
             sleep(wt)
         timer_ -= (wt + t_) * 1000
         try:
-            play(driver, wait_1s, engine, move, is_black)
+            play(driver, wait_1s, engine, move)
         except selenium.common.exceptions.ElementClickInterceptedException:
             game_over = True
         tile1 = str(C.let_to_num[move[0]]) + move[1]
@@ -437,14 +402,16 @@ def main(elo_rating=-1, game_timer_ms: int = 300000, first_move_w: str = "e2e4",
          override_location=True,
          location_lat: float = 48.8781,
          location_lon: float = -28.6298):
-    global game_timer, first_move_if_playing_white, first_move_autoplay, \
-        move_delay, moves_limit, location, location_override, elo_rating_
+    global game_timer, first_move_if_playing_white, first_move_autoplay
+    global move_delay, moves_limit, location, location_override, elo_rating_, timer_
 
     game_timer = int(game_timer_ms)
+    timer_ = game_timer
     first_move_autoplay = first_move_w is not None and len(first_move_w) == 4
     first_move_if_playing_white = first_move_w
 
     move_delay = enable_move_delay
+    moves_limit = 350
     location_override = bool(override_location)
     elo_rating_ = int(elo_rating)
 
