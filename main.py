@@ -22,6 +22,7 @@ url = "https://www.chess.com/"
 stockfish_dir = "./stockfish"
 stockfish_path = stockfish_dir + "/stockfish"
 
+
 class C:
     user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " \
                  "(KHTML, like Gecko) Chrome/83.0.4103.53 Safari/537.36"
@@ -119,8 +120,13 @@ if not os.path.exists(stockfish_path):
     Log.info("Consider copying the Stockfish binaries to "
              "the ./stockfish directory of the project path.")
     Log.info("The Stockfish binary name, must not contain a file extension, e.g. .exe/.sh")
-    os.mkdir(stockfish_dir)
-    raise FileNotFoundError(stockfish_path)
+    try:
+        os.mkdir(stockfish_dir)
+    except FileExistsError:
+        pass
+    Log.error(traceback.format_exception(FileNotFoundError(stockfish_path)))
+    input()
+    exit(1)
 
 
 def setup_driver():
@@ -140,6 +146,7 @@ def setup_driver():
     })
     Log.info(chrome_driver.execute_script("return navigator.userAgent;"))
     return chrome_driver
+
 
 def get_last_move(driver: webdriver.Chrome):
     t_ = time()
@@ -318,7 +325,6 @@ def actions(engine: stockfish.Stockfish, driver: webdriver.Chrome, session):
         return mv
 
     last_wt = 0.0
-    Piece = stockfish.Stockfish.Piece
 
     def get_move_delay(stockfish_time) -> float:
         nonlocal move, last_wt
@@ -328,20 +334,22 @@ def actions(engine: stockfish.Stockfish, driver: webdriver.Chrome, session):
         is_pawn = piece == stockfish.Stockfish.Piece.BLACK_PAWN or piece == stockfish.Stockfish.Piece.WHITE_PAWN
         if is_capturing or is_pawn:
             last_wt = max(0.0, last_wt - last_wt / random.randint(1, 3) - 2)
+            # non-negative
             return abs(random.random() / 3) * r_ / 2500
-
         wt_ = random.randint(0, 200) * random.randint(0, 1)
         if last_wt != 0:
+            # non-negative
             last_wt = max(0.0, last_wt - last_wt / random.randint(1, 3) - 2)
             return max(0.0, (abs(random.random() / 4) + op_move_time * abs(random.random() / 2)) * game_timer / 60000 * r_ / 2500)
-
-        wt_ = wt_ if wt_ != 0 else random.randint(1000, 3000)
+        # non-negative
+        wt_ = wt_ if wt_ > 0 else random.randint(1000, 3000)
+        # timer_ is non-negative => wt_ is non-negative
         wt_ = min(wt_ * stockfish_time * 6, timer_ // 8) / 1000
         wt_ = min(random.randint(2, 7), wt_)
-        if last_wt == 0:
-            last_wt = wt_
-        #preventing passing a negative time (last_wt)
-        return max(0.0, (wt_ + op_move_time * abs(random.random() / 2) + abs(random.random() / 2)) * game_timer / 60000 * r_ / 2500)
+        last_wt = wt_ if last_wt == 0 else last_wt
+        # output is non-negative
+        return (wt_ + op_move_time * abs(random.random() / 2) + abs(
+            random.random() / 2)) * game_timer / 60000 * r_ / 2500
 
     loop_id = 0
 
@@ -356,7 +364,9 @@ def actions(engine: stockfish.Stockfish, driver: webdriver.Chrome, session):
             wt = get_move_delay(t_)
             Log.debug("wt=%.3f last_wt=%.3f", wt, last_wt)
             sleep(wt)
-        timer_ -= (wt + t_) * 1000
+        # non-negative, was arbitrary in the last commit (timer_ is referenced in get_move_delay)
+        timer_ = max(0.0, timer_-(wt + t_) * 1000)
+        Log.debug("timer = "+str(timer_))
         try:
             play(driver, wait_1s, engine, move)
         except selenium.common.exceptions.ElementClickInterceptedException:
@@ -384,11 +394,12 @@ async def main0():
         def loop():
             try:
                 return actions(engine, driver, session)
-            except Exception as e:
-                if isinstance(e, KeyboardInterrupt):
-                    raise e
-                exc = traceback.format_exc()
-                print(exc)
+            except KeyboardInterrupt as e:
+                raise e
+            except selenium.common.exceptions.NoSuchWindowException as e:
+                raise e
+            except:
+                Log.error(traceback.format_exc())
                 return True
 
         driver.get(url)
