@@ -35,9 +35,9 @@ Local setup (Windows)
 
    Optional arguments:
    - ``` --elo-rating``` - engine's ELO rating (default value: ```-1```)
-   - ```--game-timer-ms``` - game timer in milliseconds (default value: ```300000```)
+   - ```--game-timer-ms``` - game timer in milliseconds (default value: ```150000```)
    - ```--first-move-w``` - first move to play if playing white pieces (default value: ```"e2e4"```)
-   - ```--enable-move-delay``` - enable delay between moves (default value: ```False```)
+   - ```--enable-move-delay``` - enable delay between moves (default value: ```True```)
    - ```--help``` - list all available options
 
 Preview:
