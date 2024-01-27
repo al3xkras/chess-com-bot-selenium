@@ -334,20 +334,15 @@ def actions(engine: stockfish.Stockfish, driver: webdriver.Chrome, session):
         is_pawn = piece == stockfish.Stockfish.Piece.BLACK_PAWN or piece == stockfish.Stockfish.Piece.WHITE_PAWN
         if is_capturing or is_pawn:
             last_wt = max(0.0, last_wt - last_wt / random.randint(1, 3) - 2)
-            # non-negative
-            return abs(random.random() / 3) * r_ / 2500
+            return abs(random.random() / 2) * r_ / 2500 + 0.1
         wt_ = random.randint(0, 200) * random.randint(0, 1)
         if last_wt != 0:
-            # non-negative
             last_wt = max(0.0, last_wt - last_wt / random.randint(1, 3) - 2)
             return max(0.0, (abs(random.random() / 4) + op_move_time * abs(random.random() / 2)) * game_timer / 60000 * r_ / 2500)
-        # non-negative
         wt_ = wt_ if wt_ > 0 else random.randint(1000, 3000)
-        # timer_ is non-negative => wt_ is non-negative
         wt_ = min(wt_ * stockfish_time * 6, timer_ // 8) / 1000
         wt_ = min(random.randint(2, 7), wt_)
         last_wt = wt_ if last_wt == 0 else last_wt
-        # output is non-negative
         return (wt_ + op_move_time * abs(random.random() / 2) + abs(
             random.random() / 2)) * game_timer / 60000 * r_ / 2500
 
@@ -362,9 +357,9 @@ def actions(engine: stockfish.Stockfish, driver: webdriver.Chrome, session):
         Log.info("Playing next move: %s", move)
         if move_delay:
             wt = get_move_delay(t_)
+            wt = wt if loop_id>4 else max(wt, abs(random.random() / 3) + 0.1)
             Log.debug("wt=%.3f last_wt=%.3f", wt, last_wt)
             sleep(wt)
-        # non-negative, was arbitrary in the last commit (timer_ is referenced in get_move_delay)
         timer_ = max(0.0, timer_-(wt + t_) * 1000)
         Log.debug("timer = "+str(timer_))
         try:
