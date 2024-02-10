@@ -1,24 +1,17 @@
-*.dat
-*.bkp
 *.log
 /tmp
 **/__pycache__
 **/.ipynb_checkpoints
-*.pdf
 /Profile/
 /stockfish/
-
-HELP.md
 target/
 !.mvn/wrapper/maven-wrapper.jar
 !**/src/main/**/target/
 !**/src/test/**/target/
-
 ### IntelliJ IDEA ###
 **/.idea
 *.iws
 *.iml
 *.ipr
-
 ### VS Code ###
 .vscode/

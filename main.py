@@ -1,13 +1,17 @@
+import asyncio
 import os
 import random
 import sys
+import threading
 import traceback
+import typing
 from time import time, sleep
 
 import logging
 import selenium.common.exceptions
-import selenium.webdriver.common.devtools.v114 as devtools
+import selenium.webdriver.common.devtools.v119 as devtools
 import trio
+import trio_asyncio
 import typer
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -21,6 +25,7 @@ import stockfish
 url = "https://www.chess.com/"
 stockfish_dir = "./stockfish"
 stockfish_path = stockfish_dir + "/stockfish"
+asyncio_loop = None
 
 
 class C:
@@ -35,7 +40,7 @@ class C:
     highlight = "highlight"
     class_ = "class"
     space = " "
-    board_xpath = "//div[@class='small-controls-rightIcons' or @class='live-game-buttons-component']"
+    controls_xpath = "//div[@class='game-controls-controller-component' or @class='live-game-buttons-component']"
     some_id = "p1234"
     promotion_moves = ["1", "8"]
     scr_xpath = """
@@ -70,6 +75,12 @@ class C:
     white_queen = "wq"
     promotion_window = "promotion-window"
     promotion_move_queen = "q"
+    wait_1s = 1
+    wait_5s = 5
+    wait_120s = 120
+    wait_50ms = 0.05
+    exit_delay = 10
+    task_wait = "task_wait"
     num_to_let = dict(zip(range(1, 9), "abcdefgh"))
     let_to_num = dict((v, k) for k, v in num_to_let.items())
 
@@ -119,7 +130,7 @@ Log.addHandler(stream)
 if not os.path.exists(stockfish_path):
     Log.info("Consider copying the Stockfish binaries to "
              "the ./stockfish directory of the project path.")
-    Log.info("The Stockfish binary name, must not contain a file extension, e.g. .exe/.sh")
+    Log.info("The Stockfish binary name must be exactly \"stockfish\", the file's extension removed.")
     try:
         os.mkdir(stockfish_dir)
     except FileExistsError:
@@ -148,8 +159,73 @@ def setup_driver():
     return chrome_driver
 
 
+def trace_exec_time(func):
+    def _wrapper(*a, **kw):
+        t0 = time()
+        res = func(*a, **kw)
+        t0 = time() - t0
+        Log.debug(f"<{func.__name__}> call took %.6fs" % t0)
+        return res
+
+    return _wrapper
+
+
+class CustomTask(asyncio.Task):
+    def __init__(self, data=None, *a, **kw):
+        super().__init__(*a, **kw)
+        self.data = data
+
+
+async def wait_until(drv, delay_seconds: float, condition):
+    async def wait_until_sub(drv_, delay_, condition_):
+        return WebDriverWait(drv_, delay_).until(condition_)
+
+    return await trio_asyncio.asyncio_as_trio(CustomTask(
+        data=(time(), delay_seconds),
+        name=C.task_wait, coro=asyncio.wait_for(
+            wait_until_sub(drv, delay_seconds, condition),
+            delay_seconds + 1,
+        )))
+
+
+def task_canceller_thread():
+    global asyncio_loop
+    while 1:
+        try:
+            sleep(2)
+            if asyncio_loop is None:
+                continue
+            task_wait = next(filter(
+                lambda x: asyncio.Task.get_name(x)==C.task_wait,
+                asyncio.all_tasks(asyncio_loop)
+            ), None)
+            if task_wait is None:
+                continue
+            if not isinstance(task_wait, CustomTask):
+                Log.error(f"Task {task_wait} is not an instance of {CustomTask}")
+                task_wait.cancel()
+                continue
+            timestamp, delay = task_wait.data
+            if time() - timestamp > delay + 1 and not task_wait.cancelled():
+                Log.debug(f"{task_wait} cancellation is taking too long ")
+                task_wait.cancel()
+                task_wait.cancel()
+                task_wait.cancel()
+                continue
+            if time()-timestamp > delay + 1:
+                Log.debug(f"Attempting to cancel the task: {task_wait}")
+                task_wait.cancel()
+                continue
+            Log.debug(f"{task_wait}")
+        except:
+            Log.error(traceback.format_exc())
+
+
+threading.Thread(daemon=True, target=task_canceller_thread).start()
+
+
+@trace_exec_time
 def get_last_move(driver: webdriver.Chrome):
-    t_ = time()
     highlighted = driver.find_elements(By.CLASS_NAME, C.highlight)
 
     if len(highlighted) < 2:
@@ -177,13 +253,15 @@ def get_last_move(driver: webdriver.Chrome):
         if x.startswith(C.square)
     ).__iter__().__next__()
     tile1, tile2 = _f(first), _f(second)
-    t_ = time() - t_
-    Log.debug("get_last_move took %.5f" % t_)
     return tile1, tile2
 
 
-def play(driver: webdriver.Chrome, wait: WebDriverWait, engine: stockfish.Stockfish, move):
-    t_ = time()
+async def sleep_async(delay):
+    await trio_asyncio.asyncio_as_trio(asyncio.sleep(delay))
+
+
+@trace_exec_time
+async def play(driver: webdriver.Chrome, engine: stockfish.Stockfish, move):
     engine.make_moves_from_current_position([move])
     pos0 = move[:2]
     pos1 = move[2:]
@@ -194,64 +272,66 @@ def play(driver: webdriver.Chrome, wait: WebDriverWait, engine: stockfish.Stockf
     scr_add = C.js_add_ptr % (C.board, cls)
     driver.execute_script(scr_rm)
     driver.execute_script(scr_add)
-    e0 = wait.until(EC.element_to_be_clickable((By.CLASS_NAME, pos0)))
+    e0 = await wait_until(driver, C.wait_1s, EC.element_to_be_clickable((By.CLASS_NAME, pos0)))
     e0.click()
-    e1 = wait.until(EC.element_to_be_clickable((By.CLASS_NAME, C.some_id)))
+    e1 = await wait_until(driver, C.wait_1s, EC.element_to_be_clickable((By.CLASS_NAME, C.some_id)))
     e1.click()
     driver.execute_script(scr_rm)
-    w = WebDriverWait(driver, 0.05)
     try:
-        window = w.until(EC.visibility_of_element_located((By.CLASS_NAME, C.promotion_window)))
+        promotion = await wait_until(driver, C.wait_50ms,
+                                     EC.visibility_of_element_located((By.CLASS_NAME, C.promotion_window)))
         sleep(0.2)
-        items = window.find_elements(By.CLASS_NAME, C.black_queen)
+        items = promotion.find_elements(By.CLASS_NAME, C.black_queen)
         if len(items) == 0:
-            items = window.find_elements(By.CLASS_NAME, C.white_queen)
+            items = promotion.find_elements(By.CLASS_NAME, C.white_queen)
         items[0].click()
     except selenium.common.exceptions.TimeoutException:
         pass
-    t_ = time() - t_
-    Log.debug("play took %.5f" % t_)
 
 
-def actions(engine: stockfish.Stockfish, driver: webdriver.Chrome, session):
+async def actions(engine: stockfish.Stockfish, driver: webdriver.Chrome):
     global timer_
     engine.set_fen_position("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", True)
     if elo_rating_ > 0:
         engine.set_elo_rating(elo_rating_)
-    wait = WebDriverWait(driver, 120)
-    wait_5s = WebDriverWait(driver, 5)
-    wait_1s = WebDriverWait(driver, 1)
 
     game_over = False
 
+    def min_n_elements_exist(by: By, selector: typing.Any, n: int = 1):
+        return lambda drv: len(drv.find_elements(by, selector)) >= n
+
     if not first_move_autoplay:
         Log.info("Waiting for a \"highlight\" element")
-        wait_5s.until(
-            lambda drv: len(drv.find_elements(By.CLASS_NAME, C.highlight)) >= 2
-        )
+        await wait_until(driver, C.wait_5s, min_n_elements_exist(
+            by=By.CLASS_NAME,
+            selector=C.highlight,
+            n=2
+        ))
     else:
         try:
-            Log.info("Waiting for the \"board\"")
-            wait_5s.until(
-                EC.element_to_be_clickable((By.CLASS_NAME, C.board))
-            )
+            Log.info("Waiting for a \"board\" element")
+            await wait_until(driver, C.wait_5s, min_n_elements_exist(
+                by=By.CLASS_NAME,
+                selector=C.board
+            ))
             Log.info("Waiting for the game to start")
-            wait_5s.until(
-                EC.element_to_be_clickable((By.XPATH, C.board_xpath))
-            )
+            await wait_until(driver, C.wait_5s, min_n_elements_exist(
+                by=By.XPATH,
+                selector=C.controls_xpath,
+            ))
         except selenium.common.exceptions.TimeoutException:
             return True
 
     board = driver.find_elements(By.CLASS_NAME, C.board)[0]
-    Log.info("Chess board found")
+    Log.info("Board found")
     timer_ = game_timer
 
     is_black = C.flipped in board.get_attribute(C.class_)
     if is_black:
         Log.info("Waiting for a \"highlight\" element")
-        wait_5s.until(
-            lambda drv: len(drv.find_elements(By.CLASS_NAME, C.highlight)) >= 2
-        )
+        await wait_until(driver, C.wait_5s,
+                         lambda drv: len(drv.find_elements(By.CLASS_NAME, C.highlight)) >= 2
+                         )
 
     Log.info("Is playing black pieces: %s" % is_black)
 
@@ -265,10 +345,10 @@ def actions(engine: stockfish.Stockfish, driver: webdriver.Chrome, session):
 
     op_move_time = 0
 
-    def wait_op(last_tiles) -> bool:
+    async def wait_op(last_tiles) -> bool:
         nonlocal game_over, op_move_time
         t1_ = time()
-        wait.until(lambda drv: op_move(drv, last_tiles))
+        await wait_until(driver, C.wait_120s, lambda drv: op_move(drv, last_tiles))
         op_move_time = time() - t1_
         Log.debug("op_move_time = %.3f", op_move_time)
         if game_over:
@@ -297,18 +377,17 @@ def actions(engine: stockfish.Stockfish, driver: webdriver.Chrome, session):
         return str(C.let_to_num[move_[0]]) + move_[1]
 
     def is_move_by_white(mv):
-        w = ["1", "2", "3", "4"]
-        return any(x in mv for x in w)
+        return any(x in mv for x in list(map(str, range(1, 5))))
 
     if not is_black:
-        play(driver, wait_1s, engine, first_move_if_playing_white)
+        await play(driver, engine, first_move_if_playing_white)
         t1, t2 = get_last_move(driver)
         by_w_ = is_move_by_white(t1)
-        Log.info("Is last move played by white: %s" % by_w_)
+        Log.info("Last move by white: %s" % by_w_)
         if by_w_:
             if not first_move_autoplay:
                 engine.make_moves_from_current_position([t1 + t2])
-            if wait_op([C.square + move_fmt(t1), C.square + move_fmt(t2)]):
+            if await wait_op([C.square + move_fmt(t1), C.square + move_fmt(t2)]):
                 return True
         else:
             engine.make_moves_from_current_position([first_move_if_playing_white, t1 + t2])
@@ -317,12 +396,9 @@ def actions(engine: stockfish.Stockfish, driver: webdriver.Chrome, session):
         t1, t2 = get_last_move(driver)
         engine.make_moves_from_current_position([t1 + t2])
 
+    @trace_exec_time
     def next_move(engine_: stockfish.Stockfish):
-        _ = time()
-        mv = engine_.get_best_move()
-        _ = time() - _
-        Log.info("next_move took %.5f" % _)
-        return mv
+        return engine_.get_best_move()
 
     last_wt = 0.0
 
@@ -338,7 +414,8 @@ def actions(engine: stockfish.Stockfish, driver: webdriver.Chrome, session):
         wt_ = random.randint(0, 200) * random.randint(0, 1)
         if last_wt != 0:
             last_wt = max(0.0, last_wt - last_wt / random.randint(1, 3) - 2)
-            return max(0.0, (abs(random.random() / 4) + op_move_time * abs(random.random() / 2)) * game_timer / 60000 * r_ / 2500)
+            return max(0.0, (abs(random.random() / 4) + op_move_time * abs(
+                random.random() / 2)) * game_timer / 60000 * r_ / 2500)
         wt_ = wt_ if wt_ > 0 else random.randint(1000, 3000)
         wt_ = min(wt_ * stockfish_time * 6, timer_ // 8) / 1000
         wt_ = min(random.randint(2, 7), wt_)
@@ -354,16 +431,16 @@ def actions(engine: stockfish.Stockfish, driver: webdriver.Chrome, session):
         move = next_move(engine)
         t_ = time() - t_
         wt = 0
-        Log.info("Playing next move: %s", move)
+        Log.info("Next move: %s", move)
         if move_delay:
             wt = get_move_delay(t_)
-            wt = wt if loop_id>4 else max(wt, abs(random.random() / 3) + 0.1)
+            wt = wt if loop_id > 4 else max(wt, abs(random.random() / 3) + 0.1)
             Log.debug("wt=%.3f last_wt=%.3f", wt, last_wt)
             sleep(wt)
-        timer_ = max(0.0, timer_-(wt + t_) * 1000)
-        Log.debug("timer = "+str(timer_))
+        timer_ = max(0.0, timer_ - (wt + t_) * 1000)
+        Log.debug("timer = " + str(timer_))
         try:
-            play(driver, wait_1s, engine, move)
+            await play(driver, engine, move)
         except selenium.common.exceptions.ElementClickInterceptedException:
             game_over = True
         tile1 = str(C.let_to_num[move[0]]) + move[1]
@@ -371,12 +448,13 @@ def actions(engine: stockfish.Stockfish, driver: webdriver.Chrome, session):
         cls1 = C.square + tile1
         cls2 = C.square + tile2
         Log.info("Waiting for opponent's move")
-        if wait_op([cls1, cls2]):
+        if await wait_op([cls1, cls2]):
             return True
     return False
 
 
 async def main0():
+    global asyncio_loop
     driver = setup_driver()
     async with driver.bidi_connection() as session:
         engine = stockfish.Stockfish(path=os.getcwd() + stockfish_path)
@@ -386,9 +464,12 @@ async def main0():
             await cdpSession.execute(
                 devtools.emulation.set_geolocation_override(**location, accuracy=95))
 
-        def loop():
+    async with trio_asyncio.open_loop() as asyncio_loop:
+        assert asyncio_loop == asyncio.get_event_loop()
+
+        async def loop():
             try:
-                return actions(engine, driver, session)
+                return await actions(engine, driver)
             except KeyboardInterrupt as e:
                 raise e
             except selenium.common.exceptions.NoSuchWindowException as e:
@@ -398,12 +479,12 @@ async def main0():
                 return True
 
         driver.get(url)
-        while loop():
-            sleep(0.5)
-        s = 10
-        Log.info("Closing Selenium WebDriver in %s seconds" % s)
-        sleep(s)
-        driver.quit()
+        while await loop():
+            await sleep_async(0.5)
+
+    Log.info("Closing Selenium WebDriver in %s seconds" % C.exit_delay)
+    sleep(C.exit_delay)
+    driver.quit()
 
 
 def main(elo_rating=-1, game_timer_ms: int = 300000, first_move_w: str = "e2e4", enable_move_delay: bool = False,
