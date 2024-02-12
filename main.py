@@ -10,8 +10,6 @@ from time import time, sleep
 import logging
 import selenium.common.exceptions
 import selenium.webdriver.common.devtools.v119 as devtools
-import trio
-import trio_asyncio
 import typer
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -76,6 +74,7 @@ class C:
     promotion_window = "promotion-window"
     promotion_move_queen = "q"
     wait_1s = 1
+    wait_2s = 2
     wait_5s = 5
     wait_120s = 120
     wait_50ms = 0.05
@@ -140,6 +139,10 @@ if not os.path.exists(stockfish_path):
     exit(1)
 
 
+def is_docker():
+    return os.environ.get("hub_host", None) is not None
+
+
 def setup_driver():
     profile_dir = os.getcwd() + "/Profile/Selenium"
     options = Options()
@@ -148,13 +151,43 @@ def setup_driver():
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option("useAutomationExtension", False)
     options.add_argument("--disable-blink-features=AutomationControlled")
-    options.add_argument("--user-data-dir=" + profile_dir)
-    options.add_argument("--profile-directory=Default")
-    chrome_driver = webdriver.Chrome(service=service, options=options)
+    import json
+
+    def execute_cmd_cdp_workaround(drv, cmd, params: dict):
+        resource = "/session/%s/chromium/send_command_and_get_result" % drv.session_id
+        url_ = drv.command_executor._url + resource
+        body = json.dumps({'cmd': cmd, 'params': params})
+        response = drv.command_executor._request('POST', url_, body)
+        return response.get('value')
+
+    def init_remote_driver(hub_url, options_, max_retries=5, retry_delay=2):
+        for _ in range(max_retries):
+            try:
+                driver = webdriver.Remote(command_executor=hub_url, options=options_)
+                return driver
+            except:
+                Log.error(traceback.format_exc(limit=2))
+                sleep(retry_delay)
+        raise ConnectionError
+
+    if is_docker():
+        options.add_argument("--start-maximized")
+        host = os.environ["hub_host"]
+        port = os.environ["hub_port"]
+        Log.info(f"{host} {port}")
+        chrome_driver = init_remote_driver(f"http://{host}:{port}/wd/hub", options)
+        execute_cmd_cdp_workaround(chrome_driver, "Network.setUserAgentOverride", {
+            "userAgent": C.user_agent
+        })
+    else:
+        options.add_argument("--user-data-dir=" + profile_dir)
+        options.add_argument("--profile-directory=Default")
+        chrome_driver = webdriver.Chrome(service=service, options=options)
+        chrome_driver.execute_cdp_cmd("Network.setUserAgentOverride", {
+            "userAgent": C.user_agent
+        })
+
     chrome_driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-    chrome_driver.execute_cdp_cmd("Network.setUserAgentOverride", {
-        "userAgent": C.user_agent
-    })
     Log.info(chrome_driver.execute_script("return navigator.userAgent;"))
     return chrome_driver
 
@@ -180,12 +213,12 @@ async def wait_until(drv, delay_seconds: float, condition):
     async def wait_until_sub(drv_, delay_, condition_):
         return WebDriverWait(drv_, delay_).until(condition_)
 
-    return await trio_asyncio.asyncio_as_trio(CustomTask(
+    return await CustomTask(
         data=(time(), delay_seconds),
         name=C.task_wait, coro=asyncio.wait_for(
             wait_until_sub(drv, delay_seconds, condition),
             delay_seconds + 1,
-        )))
+        ))
 
 
 def task_canceller_thread():
@@ -196,7 +229,7 @@ def task_canceller_thread():
             if asyncio_loop is None:
                 continue
             task_wait = next(filter(
-                lambda x: asyncio.Task.get_name(x)==C.task_wait,
+                lambda x: asyncio.Task.get_name(x) == C.task_wait,
                 asyncio.all_tasks(asyncio_loop)
             ), None)
             if task_wait is None:
@@ -212,7 +245,7 @@ def task_canceller_thread():
                 task_wait.cancel()
                 task_wait.cancel()
                 continue
-            if time()-timestamp > delay + 1:
+            if time() - timestamp > delay + 1:
                 Log.debug(f"Attempting to cancel the task: {task_wait}")
                 task_wait.cancel()
                 continue
@@ -257,7 +290,7 @@ def get_last_move(driver: webdriver.Chrome):
 
 
 async def sleep_async(delay):
-    await trio_asyncio.asyncio_as_trio(asyncio.sleep(delay))
+    await asyncio.sleep(delay)
 
 
 @trace_exec_time
@@ -272,9 +305,9 @@ async def play(driver: webdriver.Chrome, engine: stockfish.Stockfish, move):
     scr_add = C.js_add_ptr % (C.board, cls)
     driver.execute_script(scr_rm)
     driver.execute_script(scr_add)
-    e0 = await wait_until(driver, C.wait_1s, EC.element_to_be_clickable((By.CLASS_NAME, pos0)))
+    e0 = await wait_until(driver, C.wait_2s, EC.element_to_be_clickable((By.CLASS_NAME, pos0)))
     e0.click()
-    e1 = await wait_until(driver, C.wait_1s, EC.element_to_be_clickable((By.CLASS_NAME, C.some_id)))
+    e1 = await wait_until(driver, C.wait_2s, EC.element_to_be_clickable((By.CLASS_NAME, C.some_id)))
     e1.click()
     driver.execute_script(scr_rm)
     try:
@@ -360,18 +393,35 @@ async def actions(engine: stockfish.Stockfish, driver: webdriver.Chrome):
         return False
 
     def make_move(move_):
-        try:
-            engine.make_moves_from_current_position([move_])
-        except ValueError:
-            Log.error(engine.get_fen_position())
+        if len(move_) == 5:
+            assert move_.endswith(C.promotion_move_queen)
             try:
-                if not move_.endswith(C.promotion_move_queen):
-                    make_move(move_ + C.promotion_move_queen)
-                    return
+                engine.make_moves_from_current_position([move_])
             except ValueError:
-                pass
-            move_ = move_[2:4] + move_[:2]
-            engine.make_moves_from_current_position([move_])
+                Log.error(move_ + " " + engine.get_fen_position())
+                engine.make_moves_from_current_position([move_[2:4] + move_[:2] + move_[4]])
+            return
+        assert len(move_) == 4
+
+        def resolve_move_exception(move, on_exception=None):
+            try:
+                engine.make_moves_from_current_position([move])
+            except ValueError:
+                Log.error(move + " " + engine.get_fen_position())
+                None if not on_exception else on_exception()
+
+        resolve_move_exception(
+            move=move_,
+            on_exception=lambda: resolve_move_exception(
+                move=move_[2:4] + move_[:2],
+                on_exception=lambda: resolve_move_exception(
+                    move=move_ + C.promotion_move_queen,
+                    on_exception=lambda: resolve_move_exception(
+                        move=move_[2:4] + move_[:2] + C.promotion_move_queen
+                    )
+                )
+            )
+        )
 
     def move_fmt(move_):
         return str(C.let_to_num[move_[0]]) + move_[1]
@@ -456,43 +506,33 @@ async def actions(engine: stockfish.Stockfish, driver: webdriver.Chrome):
 async def main0():
     global asyncio_loop
     driver = setup_driver()
-    async with driver.bidi_connection() as session:
-        engine = stockfish.Stockfish(path=os.getcwd() + stockfish_path)
-        Log.info("Selenium CDP session open")
-        cdpSession = session.session
-        if location_override:
-            await cdpSession.execute(
-                devtools.emulation.set_geolocation_override(**location, accuracy=95))
+    engine = stockfish.Stockfish(path=os.path.join(os.getcwd(), stockfish_path))
+    asyncio_loop = asyncio.get_event_loop()
+    async def loop():
+        try:
+            return await actions(engine, driver)
+        except KeyboardInterrupt as e:
+            raise e
+        except selenium.common.exceptions.NoSuchWindowException as e:
+            raise e
+        except:
+            Log.error(traceback.format_exc())
+            return True
 
-    async with trio_asyncio.open_loop() as asyncio_loop:
-        assert asyncio_loop == asyncio.get_event_loop()
-
-        async def loop():
-            try:
-                return await actions(engine, driver)
-            except KeyboardInterrupt as e:
-                raise e
-            except selenium.common.exceptions.NoSuchWindowException as e:
-                raise e
-            except:
-                Log.error(traceback.format_exc())
-                return True
-
-        driver.get(url)
-        while await loop():
-            await sleep_async(0.5)
+    driver.get(url)
+    while await loop():
+        await sleep_async(0.5)
 
     Log.info("Closing Selenium WebDriver in %s seconds" % C.exit_delay)
     sleep(C.exit_delay)
     driver.quit()
 
 
-def main(elo_rating=-1, game_timer_ms: int = 300000, first_move_w: str = "e2e4", enable_move_delay: bool = False,
-         override_location=True,
-         location_lat: float = 48.8781,
-         location_lon: float = -28.6298):
+def main(elo_rating=-1, game_timer_ms: int = 300000,
+         first_move_w: str = "e2e4",
+         enable_move_delay: bool = False):
     global game_timer, first_move_if_playing_white, first_move_autoplay
-    global move_delay, moves_limit, location, location_override, elo_rating_, timer_
+    global move_delay, moves_limit, elo_rating_, timer_
 
     game_timer = int(game_timer_ms)
     timer_ = game_timer
@@ -501,15 +541,20 @@ def main(elo_rating=-1, game_timer_ms: int = 300000, first_move_w: str = "e2e4",
 
     move_delay = enable_move_delay
     moves_limit = 350
-    location_override = bool(override_location)
     elo_rating_ = int(elo_rating)
 
-    location = {
-        "latitude": float(location_lat),
-        "longitude": float(location_lon)
-    }
-    trio.run(main0)
+    asyncio.run(main0())
 
 
-if __name__ == '__main__':
+def main_docker():
+    kw = dict(filter(lambda _: _[1] is not None, ((arg, os.environ.get(arg, None)) for arg in [
+        "elo_rating", "game_timer_ms", "first_move_w",
+        "enable_move_delay"])))
+    Log.debug(f"kwargs: {kw}")
+    main(**kw)
+
+
+if __name__ == '__main__' and not is_docker():
     typer.run(main)
+elif __name__ == '__main__':
+    main_docker()

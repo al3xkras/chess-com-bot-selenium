@@ -1,9 +1,26 @@
 ## chess-com-bot
 
-A single-file Chess.com bot based on the Selenium automation suite and the Stockfish chess engine.
-By default, the bot imitates realistic move delays, based on the Stockfish evaluation time. This behavior can be disabled via the Command-Line Interface (CLI). Currently, the bot is only supported on Windows. While not yet tested, utilizing a Docker-Selenium environment might provide a cross-platform solution. 
+Fast, single-file Chess.com bot based on the Selenium automation suite and the Stockfish chess engine.
+The bot can optionally imitate realistic move delays, based on the Stockfish evaluation time. 
+This behavior can be enabled via the Command-Line Interface (CLI) or docker-compose. 
+Chess-com-bot is currently supported on Windows and Docker-Selenium environments.
 
-### Local setup (Windows)
+### Setup (docker-selenium):
+
+1. Install Docker.
+2. Run `docker/docker_build.bat` / `docker/docker_build.sh`.
+3. Run `docker_main.bat` / `docker_main.sh`.
+4. Wait for the containers to load (avg. 5s; excluding docker pull & docker build)
+5. To access the NoVNC interface, open http://localhost:7900/.
+6. Command line arguments can be modified in `docker/docker-compose.yml`. Requires rebuilding the main Docker container (`docker/build.bat`).
+   - `--elo-rating` - engine's ELO rating (default value: `-1`)
+   - `--game-timer-ms` - game timer in milliseconds (default value: `150000`)
+   - `--first-move-w` - initial move when playing white pieces (default value: `"e2e4"`)
+   - `--enable-move-delay` - enable delay between moves (default value: `False`)
+   - `--help` - list all available options
+
+   
+### Setup on Windows
 
 1. Create a virtual environment:
    > git clone https://github.com/al3xkras/chess-com-bot-selenium chess-com-bot
@@ -31,13 +48,6 @@ By default, the bot imitates realistic move delays, based on the Stockfish evalu
    ```code
    "./venv/Scripts/python" main.py
    ```
-
-   Optional arguments:
-   - ``` --elo-rating``` - engine's ELO rating (default value: ```-1```)
-   - ```--game-timer-ms``` - game timer in milliseconds (default value: ```150000```)
-   - ```--first-move-w``` - initial move when playing white pieces (default value: ```"e2e4"```)
-   - ```--enable-move-delay``` - enable delay between moves (default value: ```True```)
-   - ```--help``` - list all available options
 
 
 ### Tested OS & Chrome version:

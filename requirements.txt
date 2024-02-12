@@ -1,5 +1,3 @@
 selenium~=4.17.0
-trio~=0.22.0
 stockfish~=3.28.0
 typer~=0.9.0
-trio_asyncio~=0.14.0
