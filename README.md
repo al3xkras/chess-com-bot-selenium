@@ -1,15 +1,16 @@
 ## chess-com-bot
 
-Fast, single-file Chess.com bot based on the Selenium automation suite and the Stockfish chess engine.
-The bot can optionally imitate realistic move delays, based on the Stockfish evaluation time. 
-This behavior can be enabled via the Command-Line Interface (CLI) or docker-compose. 
-Chess-com-bot is currently supported on Windows and Docker-Selenium environments.
+A Chess.com bot built using the Stockfish chess engine and Selenium grid.
+
+Engine's ELO rating and realistic move delays based on Stockfish evaluation time can be set in command line arguments.
+
+Supported on any platform that can run Docker/Docker-Selenium and on Windows.
 
 ### Setup (docker-selenium):
 
-1. Install Docker.
-2. Run `docker/docker_build.bat` / `docker/docker_build.sh`.
-3. Run `docker_main.bat` / `docker_main.sh`.
+1. Install Docker. Start the Docker daemon.
+2. Run the Docker build: `docker/docker_build.bat` / `docker/docker_build.sh`.
+3. Run Docker compose: `docker_main.bat` / `docker_main.sh`.
 4. Wait for the containers to load (avg. 5s; excluding docker pull & docker build)
 5. To access the NoVNC interface, open http://localhost:7900/.
 6. Command line arguments can be modified in `docker/docker-compose.yml`. Requires rebuilding the main Docker container (`docker/build.bat`).
@@ -57,8 +58,7 @@ Chess-com-bot is currently supported on Windows and Docker-Selenium environments
 
 ### Disclaimer
 
-The software is provided as-is, without warranties of any kind. The author is not responsible for any adverse effects, including but not limited to account bans, resulting from the use of this bot. Use it responsibly and at your own discretion.
-
+The software is provided as-is, without warranties of any kind. The author is not responsible for any adverse effects, including but not limited to account bans, resulting from the use of this bot. Have fun.)
 
 ### Preview:
 
