@@ -12,7 +12,7 @@ services:
 
   selenium-worker-1:
     image: selenium/node-chrome:4.17.0
-    shm_size: 2gb
+    shm_size: 4gb
     depends_on:
       - selenium-hub
     environment:
