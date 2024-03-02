@@ -1,5 +1,6 @@
 import asyncio
 import concurrent.futures
+import itertools
 import os
 import random
 import sys
@@ -18,6 +19,7 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.remote.webdriver import WebDriver
+import selenium.webdriver.support.expected_conditions as EC
 
 import stockfish
 import json
@@ -314,7 +316,7 @@ async def handle_promotion_window(driver_):
         promotion = await wait_until(
             driver_,
             C.wait_50ms,
-            min_n_elements_exist(By.CLASS_NAME, C.promotion_window)
+            EC.visibility_of_element_located((By.CLASS_NAME, C.promotion_window))
         )
         sleep(0.2)
         item = promotion.find_elements(By.CLASS_NAME, C.black_queen)
@@ -327,6 +329,8 @@ async def handle_promotion_window(driver_):
         item.click()
     except selenium.common.exceptions.TimeoutException:
         pass
+    except selenium.common.exceptions.ElementNotInteractableException:
+        await handle_promotion_window(driver_)
 
 
 @trace_exec_time
@@ -348,6 +352,7 @@ async def play(driver: webdriver.Chrome, engine: stockfish.Stockfish, move):
             selector=f"//div[contains(@class, '{C.some_id}')]"
         ))
     except selenium.common.exceptions.TimeoutException as e:
+        driver.execute_script(scr_rm)
         raise e
     driver.execute_script(scr_rm)
     await handle_promotion_window(driver)
@@ -382,7 +387,7 @@ async def actions(engine: stockfish.Stockfish, driver_: webdriver.Chrome):
 
     timer = game_timer
     board = driver_.find_elements(By.CLASS_NAME, C.board)[0]
-    Log.info(f"Board: {board.get_attribute('innerHTML')}")
+    Log.info(f"Board: {board}")
     driver_.execute_script(C.js_rm_ptr % (C.board, C.some_id))
 
     is_black = C.flipped in board.get_attribute(C.class_)
@@ -496,17 +501,14 @@ async def actions(engine: stockfish.Stockfish, driver_: webdriver.Chrome):
         return (wt_ + op_move_time * abs(random.random() / 2) + abs(
             random.random() / 2)) * game_timer / 60000 * r_ / 2500
 
-    loop_id = 0
-
-    while loop_id < moves_limit:
-        loop_id += 1
+    for loop_id in itertools.count():
         t_ = time()
         move = next_move(engine)
         t_ = time() - t_
-        wt = 0
         Log.info("Next move: %s", move)
+        wt = 0
         if move_delay:
-            wt = get_move_delay(t_, timer)
+            wt = get_move_delay(t_)
             wt = wt if loop_id > 4 else max(wt, abs(random.random() / 3) + 0.1)
             Log.debug("wt=%.3f last_wt=%.3f", wt, last_wt)
             sleep(wt)
@@ -516,10 +518,8 @@ async def actions(engine: stockfish.Stockfish, driver_: webdriver.Chrome):
             await play(driver_, engine, move)
         except selenium.common.exceptions.ElementClickInterceptedException:
             pass
-        tile1 = str(C.let_to_num[move[0]]) + move[1]
-        tile2 = str(C.let_to_num[move[2]]) + move[3]
-        cls1 = C.square + tile1
-        cls2 = C.square + tile2
+        cls1 = C.square + str(C.let_to_num[move[0]]) + move[1]
+        cls2 = C.square + str(C.let_to_num[move[2]]) + move[3]
         Log.info("Waiting for opponent's move")
         if await wait_op([cls1, cls2]):
             return True
@@ -558,7 +558,7 @@ async def main_():
             await handle_driver_exc(e)
         except selenium.common.exceptions.WebDriverException as e:
             Log.error(traceback.format_exc())
-            await handle_driver_exc(e)
+            return True
         except:
             Log.error(traceback.format_exc())
             return True
@@ -577,14 +577,13 @@ def main(elo_rating=-1, game_timer_ms: int = 300000,
          first_move_w: str = "e2e4",
          enable_move_delay: bool = False):
     global game_timer, first_move_for_white, first_move_autoplay
-    global move_delay, moves_limit, elo_rating_
+    global move_delay, elo_rating_
 
     game_timer = int(game_timer_ms)
     first_move_autoplay = first_move_w is not None and len(first_move_w) == 4
     first_move_for_white = first_move_w
 
     move_delay = enable_move_delay
-    moves_limit = 350
     elo_rating_ = int(elo_rating)
 
     def main_ev_loop():
