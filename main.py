@@ -2,6 +2,7 @@ import asyncio
 import concurrent.futures
 import itertools
 import os
+import pdb
 import random
 import sys
 import threading
@@ -36,7 +37,6 @@ stockfish_dir = "./stockfish"
 stockfish_path = stockfish_dir + "/stockfish"
 executor = concurrent.futures.ThreadPoolExecutor(5)
 
-
 class C:
     user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " \
                  "(KHTML, like Gecko) Chrome/83.0.4103.53 Safari/537.36"
@@ -50,6 +50,8 @@ class C:
     class_ = "class"
     space = " "
     controls_xpath = "//div[@class='game-controls-controller-component' or @class='live-game-buttons-component']"
+    new_game_buttons_xpath = "//div[@class='new-game-buttons-component' or @class='game-over-controls-component']"
+    new_game_button_sub_xpath = "./button[span[contains(text(), \"%s\")]]" % "New"
     some_id = "p1234"
     promotion_moves = ["1", "8"]
     scr_xpath = """
@@ -87,7 +89,7 @@ class C:
     wait_1s = 1
     wait_2s = 2
     wait_5s = 5
-    wait_120s = 120
+    wait_240s = 240
     wait_50ms = 0.05
     exit_delay = 10
     task_wait = "task_wait"
@@ -137,6 +139,10 @@ Log = logging.getLogger('chess-log')
 Log.setLevel(logging.DEBUG)
 Log.addHandler(stream)
 
+if not os.path.exists(stockfish_path) and os.path.exists(stockfish_path+".exe"):
+    stockfish_path = stockfish_path+".exe"
+
+Log.info(stockfish_path)
 if not os.path.exists(stockfish_path):
     Log.info("Consider copying the Stockfish binaries to "
              "the ./stockfish directory of the project path.")
@@ -231,8 +237,8 @@ async def wait_until(drv, delay_seconds: float, condition):
 async def task_canceller():
     asyncio_loop = asyncio.get_event_loop()
     while asyncio_loop is None or not asyncio_loop.is_closed():
+        await asyncio.sleep(3)
         try:
-            await asyncio.sleep(3)
             if asyncio_loop is None:
                 continue
             task_wait = next(filter(
@@ -332,10 +338,8 @@ async def handle_promotion_window(driver_):
     except selenium.common.exceptions.ElementNotInteractableException:
         await handle_promotion_window(driver_)
 
-
 @trace_exec_time
 async def play(driver: webdriver.Chrome, engine: stockfish.Stockfish, move):
-    engine.make_moves_from_current_position([move])
     pos0 = C.square + str(C.let_to_num[move[0]]) + move[1]
     pos1 = C.square + str(C.let_to_num[move[2]]) + move[3]
     cls = C.space.join([C.piece, pos1, C.white_pawn, C.some_id])
@@ -352,10 +356,24 @@ async def play(driver: webdriver.Chrome, engine: stockfish.Stockfish, move):
             selector=f"//div[contains(@class, '{C.some_id}')]"
         ))
     except selenium.common.exceptions.TimeoutException as e:
-        driver.execute_script(scr_rm)
+        if next_game_auto_:
+            driver.refresh()
+            await asyncio.sleep(1)
         raise e
     driver.execute_script(scr_rm)
+    engine.make_moves_from_current_position([move])
     await handle_promotion_window(driver)
+
+
+def set_elo(engine, loop_id):
+    elo = {
+        # move 0: 1200,
+        # move 5: 1800,
+        # move 10: -1
+    }
+    if loop_id in elo:
+        engine.set_elo_rating(elo[loop_id])
+        Log.info(f"Set elo to {elo[loop_id]}")
 
 
 async def actions(engine: stockfish.Stockfish, driver_: webdriver.Chrome):
@@ -363,27 +381,19 @@ async def actions(engine: stockfish.Stockfish, driver_: webdriver.Chrome):
     if elo_rating_ > 0:
         engine.set_elo_rating(elo_rating_)
 
-    if not first_move_autoplay:
-        Log.info("Waiting for a \"highlight\" element")
+    try:
+        Log.info("Waiting for a \"board\" element")
         await wait_until(driver_, C.wait_5s, min_n_elements_exist(
             by=By.CLASS_NAME,
-            selector=C.highlight,
-            n=2
+            selector=C.board
         ))
-    else:
-        try:
-            Log.info("Waiting for a \"board\" element")
-            await wait_until(driver_, C.wait_5s, min_n_elements_exist(
-                by=By.CLASS_NAME,
-                selector=C.board
-            ))
-            Log.info("Waiting for the game to start")
-            await wait_until(driver_, C.wait_5s, min_n_elements_exist(
-                by=By.XPATH,
-                selector=C.controls_xpath,
-            ))
-        except selenium.common.exceptions.TimeoutException:
-            return True
+        Log.info("Waiting for the game to start")
+        await wait_until(driver_, C.wait_1s, min_n_elements_exist(
+            by=By.XPATH,
+            selector=C.controls_xpath,
+        ))
+    except selenium.common.exceptions.TimeoutException:
+        return True
 
     timer = game_timer
     board = driver_.find_elements(By.CLASS_NAME, C.board)[0]
@@ -406,6 +416,11 @@ async def actions(engine: stockfish.Stockfish, driver_: webdriver.Chrome):
 
     def op_move(drv: selenium.webdriver.Chrome, last_tiles):
         cls_lst = drv.execute_script(C.scr_xpath % C.xpath_highlight)
+        try:
+            drv.find_element(By.XPATH, C.new_game_buttons_xpath)
+            raise RuntimeError("Game over")
+        except selenium.common.exceptions.NoSuchElementException:
+            pass
         return not all(f(cls_lst, x) for x in last_tiles)
 
     op_move_time = 0
@@ -413,7 +428,7 @@ async def actions(engine: stockfish.Stockfish, driver_: webdriver.Chrome):
     async def wait_op(last_tiles) -> bool:
         nonlocal op_move_time
         t1_ = time()
-        await wait_until(driver_, C.wait_120s, lambda drv: op_move(drv, last_tiles))
+        await wait_until(driver_, C.wait_240s, lambda drv: op_move(drv, last_tiles))
         op_move_time = time() - t1_
         Log.debug("op_move_time = %.3f", op_move_time)
         move_ = "".join(get_last_move(driver_))
@@ -459,18 +474,12 @@ async def actions(engine: stockfish.Stockfish, driver_: webdriver.Chrome):
         return any(x in mv for x in ["1", "2", "3", "4"])
 
     if not is_black:
-        await play(driver_, engine, first_move_for_white)
-        mv_ = first_move_for_white if first_move_autoplay else "".join(get_last_move(driver_))
+        mv_ = first_move_for_white
+        await play(driver_, engine, mv_)
         by_w_ = is_move_by_white(mv_)
         Log.info("Is last move by white: %s" % by_w_)
-        if by_w_:
-            if not first_move_autoplay:
-                engine.make_moves_from_current_position([mv_])
-            if await wait_op([C.square + move_fmt(mv_[:2]), C.square + move_fmt(mv_[2:4])]):
-                return True
-        else:
-            engine.make_moves_from_current_position([first_move_for_white, mv_])
-
+        if await wait_op([C.square + move_fmt(mv_[:2]), C.square + move_fmt(mv_[2:4])]):
+            return True
     else:
         engine.make_moves_from_current_position(["".join(get_last_move(driver_))])
 
@@ -480,7 +489,7 @@ async def actions(engine: stockfish.Stockfish, driver_: webdriver.Chrome):
 
     last_wt = 0.0
 
-    def get_move_delay(stockfish_time) -> float:
+    def get_move_delay(stockfish_time, move_delay: bool) -> float:
         nonlocal move, last_wt
         r_ = elo_rating_ if elo_rating_ > 0 else 2500
         is_capturing = engine.get_what_is_on_square(move[2:4])
@@ -503,12 +512,13 @@ async def actions(engine: stockfish.Stockfish, driver_: webdriver.Chrome):
 
     for loop_id in itertools.count():
         t_ = time()
+        set_elo(engine, loop_id)
         move = next_move(engine)
         t_ = time() - t_
         Log.info("Next move: %s", move)
         wt = 0
         if move_delay:
-            wt = get_move_delay(t_)
+            wt = get_move_delay(t_, move_delay)
             wt = wt if loop_id > 4 else max(wt, abs(random.random() / 3) + 0.1)
             Log.debug("wt=%.3f last_wt=%.3f", wt, last_wt)
             sleep(wt)
@@ -525,7 +535,6 @@ async def actions(engine: stockfish.Stockfish, driver_: webdriver.Chrome):
             return True
     return False
 
-
 async def main_():
     driver = setup_driver()
     engine = stockfish.Stockfish(path=os.path.join(os.getcwd(), stockfish_path))
@@ -537,13 +546,13 @@ async def main_():
             asyncio_loop.stop()
             await asyncio.sleep(0.5)
         driver.quit()
-        await asyncio.sleep(2)
         executor.shutdown(cancel_futures=True)
 
     async def handle_driver_exc(e):
         try:
             driver.quit()
-        except: Log.error(traceback.format_exc())
+        except:
+            Log.error(traceback.format_exc())
         await stop_event_loop()
         raise e
 
@@ -556,16 +565,30 @@ async def main_():
         except selenium.common.exceptions.NoSuchWindowException as e:
             Log.error(traceback.format_exc())
             await handle_driver_exc(e)
-        except selenium.common.exceptions.WebDriverException as e:
-            Log.error(traceback.format_exc())
-            return True
         except:
             Log.error(traceback.format_exc())
             return True
 
     driver.get(url)
     asyncio.create_task(task_canceller())
+    wait = WebDriverWait(driver, 0.1)
     while await loop():
+        if not next_game_auto_ or "computer" in driver.current_url:
+            await asyncio.sleep(0.5)
+            continue
+        try:
+            wait.until(EC.element_to_be_clickable((By.XPATH, '//a[@id="guest-button"]'))).click()
+            await asyncio.sleep(0.1)
+        except:
+            pass
+        try:
+            new_game_buttons = wait.until(EC.visibility_of_element_located((By.XPATH, C.new_game_buttons_xpath)))
+        except:
+            continue
+        try:
+            new_game_buttons.find_element(By.XPATH, C.new_game_button_sub_xpath).click()
+        except Exception as e:
+            Log.error("\n".join(traceback.format_exception(e)))
         await asyncio.sleep(0.5)
 
     Log.info("Closing Selenium WebDriver in %s seconds" % C.exit_delay)
@@ -575,16 +598,17 @@ async def main_():
 
 def main(elo_rating=-1, game_timer_ms: int = 300000,
          first_move_w: str = "e2e4",
-         enable_move_delay: bool = False):
-    global game_timer, first_move_for_white, first_move_autoplay
-    global move_delay, elo_rating_
+         enable_move_delay: bool = False,
+         next_game_auto: str = "True"):
+    global game_timer, first_move_for_white
+    global move_delay, elo_rating_, next_game_auto_
 
     game_timer = int(game_timer_ms)
-    first_move_autoplay = first_move_w is not None and len(first_move_w) == 4
     first_move_for_white = first_move_w
 
     move_delay = enable_move_delay
     elo_rating_ = int(elo_rating)
+    next_game_auto_ = next_game_auto[0].lower()=="t"
 
     def main_ev_loop():
         ev_loop = asyncio.new_event_loop()
@@ -598,6 +622,7 @@ def main(elo_rating=-1, game_timer_ms: int = 300000,
             thr = threading.Thread(target=main_ev_loop, daemon=True)
             thr.start()
             thr.join()
+
 
 def main_docker():
     kw = dict(filter(lambda _: _[1] is not None, ((arg, os.environ.get(arg, None)) for arg in [
