@@ -338,6 +338,13 @@ async def handle_promotion_window(driver_):
     except selenium.common.exceptions.ElementNotInteractableException:
         await handle_promotion_window(driver_)
 
+def controls_visible(driver):
+    try:
+        driver.find_element(By.XPATH, C.new_game_buttons_xpath)
+        return True
+    except selenium.common.exceptions.NoSuchElementException:
+        return False
+
 @trace_exec_time
 async def play(driver: webdriver.Chrome, engine: stockfish.Stockfish, move):
     pos0 = C.square + str(C.let_to_num[move[0]]) + move[1]
@@ -356,7 +363,7 @@ async def play(driver: webdriver.Chrome, engine: stockfish.Stockfish, move):
             selector=f"//div[contains(@class, '{C.some_id}')]"
         ))
     except selenium.common.exceptions.TimeoutException as e:
-        if next_game_auto_:
+        if next_game_auto_ and not controls_visible(driver):
             driver.refresh()
             await asyncio.sleep(1)
         raise e
