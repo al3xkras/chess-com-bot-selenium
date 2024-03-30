@@ -1,55 +1,66 @@
 ## chess-com-bot
 
-A Chess.com bot built using the Stockfish chess engine and Selenium grid.
+A Chess.com bot based on the Stockfish chess engine and the Selenium WebDriver.
 
-Engine's ELO rating and realistic move delays based on Stockfish evaluation time can be set in command line arguments.
+- Engine's ELO rating, realistic move delays and other properties can be modified in the command line arguments.
 
-Supported on any platform that can run Docker/Docker-Selenium and on Windows.
+
+- Supported on any platform that can run Docker/Docker-Selenium and on Windows.
 
 ### Setup (docker-selenium):
 
-1. Install Docker. Start the Docker daemon.
-2. Run the Docker build: `docker/docker_build.bat` / `docker/docker_build.sh`.
-3. Run Docker compose: `docker_main.bat` / `docker_main.sh`.
-4. Wait for the containers to load (avg. 5s; excluding docker pull & docker build)
-5. To access the NoVNC interface, open http://localhost:7900/.
-6. Command line arguments can be modified in `docker/docker-compose.yml`. Requires rebuilding the main Docker container (`docker/build.bat`).
+1. Install Docker
+2. Build container images: `docker/docker_build.bat` / `docker/docker_build.sh`. (once / to apply changes)
+3. Run the docker-compose: `docker_main.bat` / `docker_main.sh`.
+4. Wait until Selenium containers are accessible at http://localhost:7900/ (interface: NoVNC)
+5. Optional properties that can be modified in `docker/docker-compose.yml`:
+   - `elo_rating` - engine's ELO rating (default value: `-1`)
+   - `game_timer_ms` - game timer in milliseconds (default value: `150000`)
+   - `first_move_w` - initial move when playing white pieces (default value: `"e2e4"`)
+   - `enable_move_delay` - enable delay between moves (default value: `False`)
+   - `next_game_auto` - start the next game automatically (default value: `True`)
+7. To exit the program, run ```cd docker && docker-compose stop```, the containers can as well be stopped from the Docker Desktop UI.
+
+### Setup on Windows
+
+1. Create a virtual environment:
+   ```cmd
+   git clone --depth 1 https://github.com/al3xkras/chess-com-bot-selenium chess-com-bot 
+   cd ./chess-com-bot
+   ```
+   
+   ```cmd
+   pip install virtualenv & virtualenv venv
+   ```
+   
+   ```cmd
+   "venv/Scripts/pip" install -r "requirements.txt"
+   ```
+
+2. Choose a compatible Stockfish release at
+   (https://github.com/official-stockfish/Stockfish/releases).
+   Unzip the contents into the ./stockfish/ directory of the project path.
+   The executable should be renamed to "stockfish.exe"
+
+
+3. Ensure that your Chrome version is supported by Selenium 4.17.0
+
+
+4. Run
+   ```cmd
+   "./venv/Scripts/python" main.py
+   ```
+   
+5. Optional command line arguments:
    - `--elo-rating` - engine's ELO rating (default value: `-1`)
    - `--game-timer-ms` - game timer in milliseconds (default value: `150000`)
    - `--first-move-w` - initial move when playing white pieces (default value: `"e2e4"`)
    - `--enable-move-delay` - enable delay between moves (default value: `False`)
+   - `--next-game-auto` - start the next game automatically (default value: `True`)
    - `--help` - list all available options
-
-   
-### Setup on Windows
-
-1. Create a virtual environment:
-   > git clone https://github.com/al3xkras/chess-com-bot-selenium chess-com-bot
-      
-   > cd ./chess-com-bot
-
-   > pip install virtualenv
-   
-   > virtualenv venv  
    
 
-2. Install required packages:
-    >"./venv/Scripts/pip" install -r "requirements.txt"
-
-3. Choose a compatible Stockfish release at
-   (https://github.com/official-stockfish/Stockfish/releases).
-   Unzip the contents into the ./stockfish/ directory of the project path.
-   The Stockfish executable's file extension should be removed.
-
-
-4. Check if the installed version of Chrome is compatible with Selenium 4.17.0
-
-
-5. Run
-   ```code
-   "./venv/Scripts/python" main.py
-   ```
-
+6. To exit the program, simply close the Chrome tab, or the command prompt window.
 
 ### Tested OS & Chrome version:
 
@@ -58,7 +69,7 @@ Supported on any platform that can run Docker/Docker-Selenium and on Windows.
 
 ### Disclaimer
 
-The software is provided as-is, without warranties of any kind. The author is not responsible for any adverse effects, including but not limited to account bans, resulting from the use of this bot. Have fun.)
+The software is provided as-is, without warranties of any kind. The author is not responsible for any adverse effects, including but not limited to account bans, resulting from the use of this bot.
 
 ### Preview:
 
