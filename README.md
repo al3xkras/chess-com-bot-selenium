@@ -2,7 +2,7 @@
 
 A Chess.com bot based on the Stockfish chess engine and the Selenium WebDriver.
 
-- Engine's ELO rating, realistic move delays and other properties can be modified in the command line arguments.
+- Engine's ELO rating, and other properties can be modified in the command line arguments.
 
 
 - Supported on any platform that can run Docker/Docker-Selenium and on Windows.

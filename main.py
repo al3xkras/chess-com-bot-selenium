@@ -2,7 +2,6 @@ import asyncio
 import concurrent.futures
 import itertools
 import os
-import pdb
 import random
 import sys
 import threading
@@ -36,6 +35,7 @@ url = "https://www.chess.com/"
 stockfish_dir = "./stockfish"
 stockfish_path = stockfish_dir + "/stockfish"
 executor = concurrent.futures.ThreadPoolExecutor(5)
+
 
 class C:
     user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " \
@@ -139,8 +139,8 @@ Log = logging.getLogger('chess-log')
 Log.setLevel(logging.DEBUG)
 Log.addHandler(stream)
 
-if not os.path.exists(stockfish_path) and os.path.exists(stockfish_path+".exe"):
-    stockfish_path = stockfish_path+".exe"
+if not os.path.exists(stockfish_path) and os.path.exists(stockfish_path + ".exe"):
+    stockfish_path = stockfish_path + ".exe"
 
 Log.info(stockfish_path)
 if not os.path.exists(stockfish_path):
@@ -262,9 +262,10 @@ async def task_canceller():
                 task_wait.cancel()
                 continue
             Log.debug(f"{task_wait}")
+        except asyncio.CancelledError as e:
+            raise e
         except:
             Log.error(traceback.format_exc())
-
 
 @trace_exec_time
 def get_last_move(drv: webdriver.Chrome):
@@ -338,12 +339,14 @@ async def handle_promotion_window(driver_):
     except selenium.common.exceptions.ElementNotInteractableException:
         await handle_promotion_window(driver_)
 
+
 def controls_visible(driver):
     try:
         driver.find_element(By.XPATH, C.new_game_buttons_xpath)
         return True
     except selenium.common.exceptions.NoSuchElementException:
         return False
+
 
 @trace_exec_time
 async def play(driver: webdriver.Chrome, engine: stockfish.Stockfish, move):
@@ -380,7 +383,6 @@ def set_elo(engine, loop_id):
     }
     if loop_id in elo:
         engine.set_elo_rating(elo[loop_id])
-        Log.info(f"Set elo to {elo[loop_id]}")
 
 
 async def actions(engine: stockfish.Stockfish, driver_: webdriver.Chrome):
@@ -418,7 +420,7 @@ async def actions(engine: stockfish.Stockfish, driver_: webdriver.Chrome):
 
     Log.info("Is playing black pieces: %s" % is_black)
 
-    def f(cls_lst, cls):
+    def has_subclass(cls_lst, cls):
         return any(cls in x for x in cls_lst)
 
     def op_move(drv: selenium.webdriver.Chrome, last_tiles):
@@ -428,51 +430,20 @@ async def actions(engine: stockfish.Stockfish, driver_: webdriver.Chrome):
             raise RuntimeError("Game over")
         except selenium.common.exceptions.NoSuchElementException:
             pass
-        return not all(f(cls_lst, x) for x in last_tiles)
+        return not all(has_subclass(cls_lst, x) for x in last_tiles)
 
     op_move_time = 0
 
     async def wait_op(last_tiles) -> bool:
         nonlocal op_move_time
-        t1_ = time()
+        t = time()
         await wait_until(driver_, C.wait_240s, lambda drv: op_move(drv, last_tiles))
-        op_move_time = time() - t1_
+        op_move_time = time() - t
         Log.debug("op_move_time = %.3f", op_move_time)
-        move_ = "".join(get_last_move(driver_))
-        Log.info("Opponent's move: %s", move_)
-        make_move(move_)
+        mv = "".join(get_last_move(driver_))
+        Log.info("Opponent's move: %s", mv)
+        engine.make_moves_from_current_position([mv])
         return False
-
-    def make_move(move_):
-        if len(move_) == 5:
-            assert move_.endswith(C.promotion_move_queen)
-            try:
-                engine.make_moves_from_current_position([move_])
-            except ValueError:
-                Log.error(move_ + " " + engine.get_fen_position())
-                engine.make_moves_from_current_position([move_[2:4] + move_[:2] + move_[4]])
-            return
-        assert len(move_) == 4
-
-        def resolve_move_exception(mv, on_exception=None):
-            try:
-                engine.make_moves_from_current_position([mv])
-            except ValueError:
-                Log.error(mv + " " + engine.get_fen_position())
-                None if not on_exception else on_exception()
-
-        resolve_move_exception(
-            mv=move_,
-            on_exception=lambda: resolve_move_exception(
-                mv=move_[2:4] + move_[:2],
-                on_exception=lambda: resolve_move_exception(
-                    mv=move_ + C.promotion_move_queen,
-                    on_exception=lambda: resolve_move_exception(
-                        mv=move_[2:4] + move_[:2] + C.promotion_move_queen
-                    )
-                )
-            )
-        )
 
     def move_fmt(move_):
         return str(C.let_to_num[move_[0]]) + move_[1]
@@ -496,7 +467,7 @@ async def actions(engine: stockfish.Stockfish, driver_: webdriver.Chrome):
 
     last_wt = 0.0
 
-    def get_move_delay(stockfish_time, move_delay: bool) -> float:
+    def get_move_delay(stockfish_time) -> float:
         nonlocal move, last_wt
         r_ = elo_rating_ if elo_rating_ > 0 else 2500
         is_capturing = engine.get_what_is_on_square(move[2:4])
@@ -525,7 +496,7 @@ async def actions(engine: stockfish.Stockfish, driver_: webdriver.Chrome):
         Log.info("Next move: %s", move)
         wt = 0
         if move_delay:
-            wt = get_move_delay(t_, move_delay)
+            wt = get_move_delay(t_)
             wt = wt if loop_id > 4 else max(wt, abs(random.random() / 3) + 0.1)
             Log.debug("wt=%.3f last_wt=%.3f", wt, last_wt)
             sleep(wt)
@@ -590,10 +561,12 @@ async def main_():
             pass
         try:
             new_game_buttons = wait.until(EC.visibility_of_element_located((By.XPATH, C.new_game_buttons_xpath)))
+            await asyncio.sleep(0.1)
         except:
             continue
         try:
             new_game_buttons.find_element(By.XPATH, C.new_game_button_sub_xpath).click()
+            await asyncio.sleep(1)
         except Exception as e:
             Log.error("\n".join(traceback.format_exception(e)))
         await asyncio.sleep(0.5)
@@ -615,7 +588,7 @@ def main(elo_rating=-1, game_timer_ms: int = 300000,
 
     move_delay = enable_move_delay
     elo_rating_ = int(elo_rating)
-    next_game_auto_ = next_game_auto[0].lower()=="t"
+    next_game_auto_ = next_game_auto[0].lower() == "t"
 
     def main_ev_loop():
         ev_loop = asyncio.new_event_loop()
