@@ -50,8 +50,8 @@ class C:
     class_ = "class"
     space = " "
     controls_xpath = "//div[@class='game-controls-controller-component' or @class='live-game-buttons-component']"
-    new_game_buttons_xpath = "//div[@class='new-game-buttons-component' or @class='game-over-controls-component']"
-    new_game_button_sub_xpath = "./button[span[contains(text(), \"%s\")]]" % "New"
+    new_game_buttons_xpath = "//div[button[span[contains(text(),'New') or contains(text(),'Decline') or contains(text(),'Rem')]]]"
+    new_game_button_sub_xpath = "./button[span[contains(text(), \"%s\")]]"
     some_id = "p1234"
     promotion_moves = ["1", "8"]
     scr_xpath = """
@@ -218,6 +218,13 @@ def trace_exec_time(func):
     return _wrapper
 
 
+def set_elo(engine, loop_id):
+    elo = {
+    }
+    if loop_id in elo:
+        engine.set_elo_rating(elo[loop_id])
+
+
 class CustomTask(asyncio.Task):
     def __init__(self, data=None, *a, **kw):
         super().__init__(*a, **kw)
@@ -266,6 +273,7 @@ async def task_canceller():
             raise e
         except:
             Log.error(traceback.format_exc())
+
 
 @trace_exec_time
 def get_last_move(drv: webdriver.Chrome):
@@ -375,29 +383,19 @@ async def play(driver: webdriver.Chrome, engine: stockfish.Stockfish, move):
     await handle_promotion_window(driver)
 
 
-def set_elo(engine, loop_id):
-    elo = {
-        # move 0: 1200,
-        # move 5: 1800,
-        # move 10: -1
-    }
-    if loop_id in elo:
-        engine.set_elo_rating(elo[loop_id])
-
-
 async def actions(engine: stockfish.Stockfish, driver_: webdriver.Chrome):
     engine.set_fen_position("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", True)
     if elo_rating_ > 0:
         engine.set_elo_rating(elo_rating_)
 
     try:
-        Log.info("Waiting for a \"board\" element")
-        await wait_until(driver_, C.wait_5s, min_n_elements_exist(
+        # Log.info("Waiting for a \"board\" element")
+        await wait_until(driver_, C.wait_50ms, min_n_elements_exist(
             by=By.CLASS_NAME,
             selector=C.board
         ))
-        Log.info("Waiting for the game to start")
-        await wait_until(driver_, C.wait_1s, min_n_elements_exist(
+        # Log.info("Waiting for the game to start")
+        await wait_until(driver_, C.wait_50ms, min_n_elements_exist(
             by=By.XPATH,
             selector=C.controls_xpath,
         ))
@@ -426,9 +424,12 @@ async def actions(engine: stockfish.Stockfish, driver_: webdriver.Chrome):
     def op_move(drv: selenium.webdriver.Chrome, last_tiles):
         cls_lst = drv.execute_script(C.scr_xpath % C.xpath_highlight)
         try:
-            drv.find_element(By.XPATH, C.new_game_buttons_xpath)
-            raise RuntimeError("Game over")
+            el = drv.find_element(By.XPATH, C.new_game_buttons_xpath)
+            if el.is_displayed():
+                raise RuntimeError("Game over")
         except selenium.common.exceptions.NoSuchElementException:
+            pass
+        except selenium.common.exceptions.StaleElementReferenceException:
             pass
         return not all(has_subclass(cls_lst, x) for x in last_tiles)
 
@@ -513,6 +514,7 @@ async def actions(engine: stockfish.Stockfish, driver_: webdriver.Chrome):
             return True
     return False
 
+
 async def main_():
     driver = setup_driver()
     engine = stockfish.Stockfish(path=os.path.join(os.getcwd(), stockfish_path))
@@ -525,6 +527,30 @@ async def main_():
             await asyncio.sleep(0.5)
         driver.quit()
         executor.shutdown(cancel_futures=True)
+
+    async def handle_menu_buttons(wait):
+        try:
+            wait.until(EC.element_to_be_clickable((By.XPATH, '//a[@id="guest-button"]'))).click()
+            await asyncio.sleep(0.5)
+        except selenium.common.exceptions.TimeoutException:
+            pass
+        try:
+            new_game_buttons = wait.until(EC.visibility_of_element_located((By.XPATH, C.new_game_buttons_xpath)))
+            await asyncio.sleep(0.5)
+        except selenium.common.exceptions.TimeoutException:
+            return
+        try:
+            _ = new_game_buttons.find_element(By.XPATH, C.new_game_button_sub_xpath % "Decline")
+            await asyncio.sleep(0.5)
+            _.click()
+        except selenium.common.exceptions.WebDriverException:
+            pass
+        try:
+            _ = new_game_buttons.find_element(By.XPATH, C.new_game_button_sub_xpath % "New")
+            await asyncio.sleep(0.5)
+            _.click()
+        except selenium.common.exceptions.WebDriverException:
+            pass
 
     async def handle_driver_exc(e):
         try:
@@ -545,31 +571,16 @@ async def main_():
             await handle_driver_exc(e)
         except:
             Log.error(traceback.format_exc())
+            await asyncio.sleep(1)
             return True
 
     driver.get(url)
     asyncio.create_task(task_canceller())
-    wait = WebDriverWait(driver, 0.1)
+    wait_ = WebDriverWait(driver, 0.1)
     while await loop():
-        if not next_game_auto_ or "computer" in driver.current_url:
-            await asyncio.sleep(0.5)
-            continue
-        try:
-            wait.until(EC.element_to_be_clickable((By.XPATH, '//a[@id="guest-button"]'))).click()
-            await asyncio.sleep(0.1)
-        except:
-            pass
-        try:
-            new_game_buttons = wait.until(EC.visibility_of_element_located((By.XPATH, C.new_game_buttons_xpath)))
-            await asyncio.sleep(0.1)
-        except:
-            continue
-        try:
-            new_game_buttons.find_element(By.XPATH, C.new_game_button_sub_xpath).click()
-            await asyncio.sleep(1)
-        except Exception as e:
-            Log.error("\n".join(traceback.format_exception(e)))
-        await asyncio.sleep(0.5)
+        if next_game_auto_ and "computer" not in driver.current_url:
+            await handle_menu_buttons(wait_)
+        await asyncio.sleep(0.1)
 
     Log.info("Closing Selenium WebDriver in %s seconds" % C.exit_delay)
     sleep(C.exit_delay)
