@@ -86,11 +86,13 @@ class C:
     white_queen = "wq"
     promotion_window = "promotion-window"
     promotion_move_queen = "q"
+    # Wait for at most 20 minutes for the opponent to make a move. 
+    # Then raise selenium.common.exceptions.TimeoutException and wait for the next game to start
+    wait_long = 1200 
+    wait_50ms = 0.05
     wait_1s = 1
     wait_2s = 2
     wait_5s = 5
-    wait_240s = 240
-    wait_50ms = 0.05
     exit_delay = 10
     task_wait = "task_wait"
     num_to_let = dict(zip(range(1, 9), "abcdefgh"))
@@ -364,6 +366,7 @@ async def play(driver: webdriver.Chrome, engine: stockfish.Stockfish, move):
     scr_rm = C.js_rm_ptr % (C.board, C.some_id)
     scr_add = C.js_add_ptr % (C.board, cls)
     driver.execute_script(scr_add)
+    await asyncio.sleep(0.01)
     try:
         await wait_until(driver, C.wait_2s, find_element_and_click(
             by=By.XPATH,
@@ -374,9 +377,12 @@ async def play(driver: webdriver.Chrome, engine: stockfish.Stockfish, move):
             selector=f"//div[contains(@class, '{C.some_id}')]"
         ))
     except selenium.common.exceptions.TimeoutException as e:
-        if next_game_auto_ and not controls_visible(driver):
+        if not controls_visible(driver):        
             driver.refresh()
             await asyncio.sleep(1)
+        #if next_game_auto_ and :
+        # 
+        #    
         raise e
     driver.execute_script(scr_rm)
     engine.make_moves_from_current_position([move])
@@ -389,12 +395,13 @@ async def actions(engine: stockfish.Stockfish, driver_: webdriver.Chrome):
         engine.set_elo_rating(elo_rating_)
 
     try:
-        # Log.info("Waiting for a \"board\" element")
+        Log.info("Waiting for a \"board\" element")
         await wait_until(driver_, C.wait_50ms, min_n_elements_exist(
             by=By.CLASS_NAME,
             selector=C.board
         ))
-        # Log.info("Waiting for the game to start")
+        driver_.execute_script(C.js_rm_ptr % (C.board, C.some_id))
+        Log.info("Waiting for the game to start")
         await wait_until(driver_, C.wait_50ms, min_n_elements_exist(
             by=By.XPATH,
             selector=C.controls_xpath,
@@ -438,7 +445,7 @@ async def actions(engine: stockfish.Stockfish, driver_: webdriver.Chrome):
     async def wait_op(last_tiles) -> bool:
         nonlocal op_move_time
         t = time()
-        await wait_until(driver_, C.wait_240s, lambda drv: op_move(drv, last_tiles))
+        await wait_until(driver_, C.wait_long, lambda drv: op_move(drv, last_tiles))
         op_move_time = time() - t
         Log.debug("op_move_time = %.3f", op_move_time)
         mv = "".join(get_last_move(driver_))
