@@ -1,7 +1,9 @@
 import asyncio
+import collections
 import concurrent.futures
 import itertools
 import os
+import pdb
 import random
 import sys
 import threading
@@ -36,6 +38,7 @@ stockfish_dir = "./stockfish"
 stockfish_path = stockfish_dir + "/stockfish"
 executor = concurrent.futures.ThreadPoolExecutor(5)
 
+previous_moves = collections.deque(maxlen=4)
 
 class C:
     user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " \
@@ -350,11 +353,40 @@ async def handle_promotion_window(driver_):
 
 def controls_visible(driver):
     try:
-        driver.find_element(By.XPATH, C.new_game_buttons_xpath)
-        return True
+        el = driver.find_element(By.XPATH, C.new_game_buttons_xpath)
+        return el.is_displayed()
     except selenium.common.exceptions.NoSuchElementException:
         return False
+    except selenium.common.exceptions.StaleElementReferenceException:
+        return False
 
+def get_next_move(engine: stockfish.Stockfish):
+    global previous_moves
+    mv = engine.get_best_move()
+    if mv not in previous_moves:
+        previous_moves.append(mv)
+        return mv
+    Log.debug(f"The best move {mv} will likely cause a draw. Choosing another move")
+    found = False
+    top_moves = [x["Move"] for x in engine.get_top_moves(5)]
+    print(top_moves)
+    if mv in previous_moves:
+        for i, mv in enumerate(top_moves):
+            if mv not in previous_moves:
+                found = True
+                break
+            # the move will not cause a draw yet
+            if i < 2:
+                Log.debug(f"the move {mv} will not cause a draw yet")
+                found = True
+                break
+            # the move will likely cause a draw
+    if not found:
+        Log.error(f"The best move {top_moves[0]} will lead to a draw.")
+        previous_moves.append(top_moves[0])
+        return top_moves[0]
+    previous_moves.append(mv)
+    return mv
 
 @trace_exec_time
 async def play(driver: webdriver.Chrome, engine: stockfish.Stockfish, move):
@@ -433,6 +465,7 @@ async def actions(engine: stockfish.Stockfish, driver_: webdriver.Chrome):
             pass
         return not all(has_subclass(cls_lst, x) for x in last_tiles)
 
+
     op_move_time = 0
 
     async def wait_op(last_tiles) -> bool:
@@ -464,7 +497,7 @@ async def actions(engine: stockfish.Stockfish, driver_: webdriver.Chrome):
 
     @trace_exec_time
     def next_move(engine_: stockfish.Stockfish):
-        return engine_.get_best_move()
+        return get_next_move(engine=engine_)
 
     last_wt = 0.0
 
