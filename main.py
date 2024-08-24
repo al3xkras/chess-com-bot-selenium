@@ -182,7 +182,7 @@ def init_remote_driver(hub_url, options_, max_retries=5, retry_delay=2):
 
 
 def setup_driver():
-    profile_dir = os.getcwd() + "/Profile/Selenium"
+    profile_dir = os.path.join(os.getcwd(), "Profile/Selenium")
     options = Options()
     service = Service()
     options.add_argument("--mute-audio")
@@ -370,17 +370,16 @@ def get_next_move(engine: stockfish.Stockfish):
     found = False
     top_moves = [x["Move"] for x in engine.get_top_moves(5)]
     print(top_moves)
-    if mv in previous_moves:
-        for i, mv in enumerate(top_moves):
-            if mv not in previous_moves:
-                found = True
-                break
-            # the move will not cause a draw yet
-            if i < 2:
-                Log.debug(f"the move {mv} will not cause a draw yet")
-                found = True
-                break
-            # the move will likely cause a draw
+    for i, mv in enumerate(top_moves):
+        if mv not in previous_moves:
+            found = True
+            break
+        # the move will not cause a draw yet
+        if i < 2:
+            Log.debug(f"the move {mv} will not cause a draw yet")
+            found = True
+            break
+        # the move will likely cause a draw
     if not found:
         Log.error(f"The best move {top_moves[0]} will lead to a draw.")
         previous_moves.append(top_moves[0])
