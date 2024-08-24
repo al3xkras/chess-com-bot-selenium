@@ -1,25 +1,24 @@
 ## chess-com-bot
 
-A Chess.com bot based on the Stockfish chess engine and the Selenium WebDriver.
+A Chess.com bot based on the Stockfish chess engine and Selenium WebDriver.
 
-- Engine's ELO rating, and other properties can be modified in the command line arguments.
+- Fully configurable (using the command line arguments or the docker-compose, see the list of available configurations below).
+- Supported platforms: Docker (Docker-Selenium) and Windows
 
-
-- Supported on any platform that can run Docker/Docker-Selenium and on Windows.
-
-### Setup (docker-selenium):
+### Setup (Docker):
 
 1. Install Docker
 2. Build container images: `docker/docker_build.bat` / `docker/docker_build.sh`. (once / to apply changes)
-3. Run the docker-compose: `docker_main.bat` / `docker_main.sh`.
-4. Wait until Selenium containers are accessible at http://localhost:7900/ (interface: NoVNC)
-5. Optional properties that can be modified in `docker/docker-compose.yml`:
+3. Run containers using the docker-compose: `docker_main.bat` / `docker_main.sh`.
+
+   List of configurable docker-compose properties `docker/docker-compose.yml`:
    - `elo_rating` - engine's ELO rating (default value: `-1`)
    - `game_timer_ms` - game timer in milliseconds (default value: `150000`)
    - `first_move_w` - initial move when playing white pieces (default value: `"e2e4"`)
    - `enable_move_delay` - enable delay between moves (default value: `False`)
    - `next_game_auto` - start the next game automatically (default value: `True`)
-7. To exit the program, run ```cd docker && docker-compose stop```, the containers can as well be stopped from the Docker Desktop UI.
+4. Wait until the Selenium Chrome node is accessible at http://localhost:7900/ (interface: NoVNC)
+5. To exit the program, run ```cd docker && docker-compose stop```, or stop the containers from the Docker Desktop UI.
 
 ### Setup on Windows
 
@@ -39,19 +38,22 @@ A Chess.com bot based on the Stockfish chess engine and the Selenium WebDriver.
 
 2. Choose a compatible Stockfish release at
    (https://github.com/official-stockfish/Stockfish/releases).
-   Unzip the contents into the ./stockfish/ directory of the project path.
-   The executable should be renamed to "stockfish.exe"
+   
+   Example: https://github.com/official-stockfish/Stockfish/releases/tag/sf_16.1 .
 
 
-3. Ensure that your Chrome version is supported by Selenium 4.17.0
+3. Unzip the stockfish executable into the ./stockfish/ directory.
 
 
-4. Run
+4. Rename the executable to "stockfish.exe" or "stockfish"
+
+
+5. Run the bot using the command line:
    ```cmd
    "./venv/Scripts/python" main.py
    ```
-   
-5. Optional command line arguments:
+
+   List of configurable command line arguments:
    - `--elo-rating` - engine's ELO rating (default value: `-1`)
    - `--game-timer-ms` - game timer in milliseconds (default value: `150000`)
    - `--first-move-w` - initial move when playing white pieces (default value: `"e2e4"`)
@@ -60,9 +62,7 @@ A Chess.com bot based on the Stockfish chess engine and the Selenium WebDriver.
    - `--help` - list all available options
    
 
-6. To exit the program, simply close the Chrome tab, or the command prompt window.
-
-### Tested OS & Chrome version:
+### Tested OS & Chrome:
 
 - Windows 11 Version 23H2 (Build 22631.3007); 
 - Chrome 121.0.6167.161 (Official Build) (64-bit) (cohort: Stable) 
