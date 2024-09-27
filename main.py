@@ -38,7 +38,7 @@ stockfish_dir = "./stockfish"
 stockfish_path = stockfish_dir + "/stockfish"
 executor = concurrent.futures.ThreadPoolExecutor(5)
 
-previous_moves = collections.deque(maxlen=4)
+previous_moves = collections.deque(maxlen=5)
 
 class C:
     user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " \
@@ -188,7 +188,13 @@ def setup_driver():
     options.add_argument("--mute-audio")
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option("useAutomationExtension", False)
+    options.add_experimental_option("prefs", {
+        "intl.accept_languages": ["en-US"]
+    })
     options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_argument("--lang=en")
+    options.add_argument("--accept-lang=en-US")
+    
     if is_docker():
         options.add_argument("--start-maximized")
         host = os.environ["hub_host"]
@@ -375,7 +381,7 @@ def get_next_move(engine: stockfish.Stockfish):
             found = True
             break
         # the move will not cause a draw yet
-        if i < 2:
+        if i < 1:
             Log.debug(f"the move {mv} will not cause a draw yet")
             found = True
             break
@@ -416,6 +422,7 @@ async def play(driver: webdriver.Chrome, engine: stockfish.Stockfish, move):
 
 async def actions(engine: stockfish.Stockfish, driver_: webdriver.Chrome):
     engine.set_fen_position("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", True)
+    previous_moves.clear()
     if elo_rating_ > 0:
         engine.set_elo_rating(elo_rating_)
 
