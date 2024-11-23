@@ -1,5 +1,5 @@
 cd ./docker
-docker-compose stop
-docker-compose up -d
+docker compose stop
+docker compose up -d --build
 timeout 3
-python -m webbrowser "http://localhost:7900"
+python3 -m webbrowser "http://localhost:7901"

@@ -1,15 +1,17 @@
 ## chess-com-bot
 
-A Chess.com bot based on the Stockfish chess engine and Selenium WebDriver.
+A Chess.com bot based on the Selenium WebDriver for browser automation and the Stockfish chess engine for position evaluation.
+
+Features:
 
 - Fully configurable (using the command line arguments or the docker-compose, see the list of available configurations below).
-- Supported platforms: Docker (Docker-Selenium) and Windows
+- Supports Docker and Windows platforms. Linux OS may be supported if there exists a Stockfish build for your distribution, check https://github.com/official-stockfish/Stockfish/releases/
+- The bot can work without user interference after the first game is started manually.
 
 ### Setup (Docker):
 
-1. Install Docker
-2. Build container images: `docker/docker_build.bat` / `docker/docker_build.sh`. (once / to apply changes)
-3. Run containers using the docker-compose: `docker_main.bat` / `docker_main.sh`.
+1. Install Docker and Docker compose. 
+2. Run containers using the Docker compose: `docker_main.bat` / `docker_main.sh`.
 
    List of configurable docker-compose properties `docker/docker-compose.yml`:
    - `elo_rating` - engine's ELO rating (default value: `-1`)
@@ -17,8 +19,9 @@ A Chess.com bot based on the Stockfish chess engine and Selenium WebDriver.
    - `first_move_w` - initial move when playing white pieces (default value: `"e2e4"`)
    - `enable_move_delay` - enable delay between moves (default value: `False`)
    - `next_game_auto` - start the next game automatically (default value: `True`)
-4. Wait until the Selenium Chrome node is accessible at http://localhost:7900/ (interface: NoVNC)
-5. To exit the program, run ```cd docker && docker-compose stop```, or stop the containers from the Docker Desktop UI.
+4. Wait until a Chrome NoVNC session is loaded at http://localhost:7901/
+5. To check if the bot is working properly, start the first game manually and wait until the first move is made.
+6. To exit the program, run ```cd docker && docker compose stop```, or stop the containers from the Docker Desktop UI.
 
 ### Setup on Windows
 
@@ -29,7 +32,7 @@ A Chess.com bot based on the Stockfish chess engine and Selenium WebDriver.
    ```
    
    ```cmd
-   pip install virtualenv & virtualenv venv
+   pip install virtualenv && virtualenv venv
    ```
    
    ```cmd
@@ -65,7 +68,7 @@ A Chess.com bot based on the Stockfish chess engine and Selenium WebDriver.
 ### Tested OS & Chrome:
 
 - Windows 11 Version 23H2 (Build 22631.3007); 
-- Chrome 121.0.6167.161 (Official Build) (64-bit) (cohort: Stable) 
+- Chrome 121.0.6167.161 (Official Build) (64-bit) (cohort: Stable)
 
 ### Disclaimer
 
