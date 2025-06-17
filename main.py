@@ -88,7 +88,6 @@ class C:
     black_queen = "bq"
     white_queen = "wq"
     promotion_window = "promotion-window"
-    promotion_move_queen = "q"
     wait_1s = 1
     wait_2s = 2
     wait_5s = 5
@@ -194,7 +193,7 @@ def setup_driver():
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_argument("--lang=en")
     options.add_argument("--accept-lang=en-US")
-    
+
     if is_docker():
         options.add_argument("--start-maximized")
         host = os.environ["hub_host"]
@@ -521,7 +520,8 @@ async def actions(engine: stockfish.Stockfish, driver_: webdriver.Chrome):
             last_wt = max(0.0, last_wt - last_wt / random.randint(1, 3) - 2)
             return max(0.0, (abs(random.random() / 4) + op_move_time * abs(
                 random.random() / 2)) * game_timer / 60000 * r_ / 2500)
-        wt_ = wt_ if wt_ > 0 else random.randint(1000, 3000)
+        # MODIFIKASI: Meningkatkan rentang random delay untuk gerakan normal
+        wt_ = wt_ if wt_ > 0 else random.randint(3000, 7000) # Diubah dari (1000, 3000)
         wt_ = min(wt_ * stockfish_time * 6, timer // 8) / 1000
         wt_ = min(random.randint(2, 7), wt_)
         last_wt = wt_ if last_wt == 0 else last_wt
@@ -626,9 +626,9 @@ async def main_():
     driver.quit()
 
 
-def main(elo_rating=-1, game_timer_ms: int = 300000,
+def main(elo_rating: int = -1, game_timer_ms: int = 300000,
          first_move_w: str = "e2e4",
-         enable_move_delay: bool = False,
+         enable_move_delay: str = "False",
          next_game_auto: str = "True"):
     global game_timer, first_move_for_white
     global move_delay, elo_rating_, next_game_auto_
@@ -636,7 +636,7 @@ def main(elo_rating=-1, game_timer_ms: int = 300000,
     game_timer = int(game_timer_ms)
     first_move_for_white = first_move_w
 
-    move_delay = enable_move_delay
+    move_delay = enable_move_delay.lower() == "true"
     elo_rating_ = int(elo_rating)
     next_game_auto_ = next_game_auto[0].lower() == "t"
 
