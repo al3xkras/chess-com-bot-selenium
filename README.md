@@ -5,7 +5,7 @@ A Chess.com bot based on the Selenium WebDriver for browser automation and the S
 Features:
 
 - Fully configurable (using the command line arguments or the docker-compose, see the list of available configurations below).
-- Supports Docker and Windows platforms. Linux OS may be supported if there exists a Stockfish build for your distribution, check https://github.com/official-stockfish/Stockfish/releases/
+- Supports Docker and Windows platforms. Linux OS may be supported if there exists a Stockfish build for your distribution, check https://stockfishchess.org/download/
 - The bot can work without user interference after the first game is started manually.
 
 ### Setup (Docker):
@@ -40,9 +40,9 @@ Features:
    ```
 
 2. Choose a compatible Stockfish release at
-   (https://github.com/official-stockfish/Stockfish/releases).
+   (https://stockfishchess.org/download/).
    
-   Example: https://github.com/official-stockfish/Stockfish/releases/tag/sf_16.1 .
+   Example: https://stockfishchess.org/download/ .
 
 
 3. Unzip the stockfish executable into the ./stockfish/ directory.
