@@ -27,7 +27,7 @@ Features:
 
 1. Create a virtual environment:
    ```cmd
-   git clone --depth 1 https://github.com/al3xkras/chess-com-bot-selenium chess-com-bot 
+   git clone https://github.com/dinarsanjaya/chess-com-bot-selenium chess-com-bot 
    cd ./chess-com-bot
    ```
    
