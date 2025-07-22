@@ -24,6 +24,7 @@ from selenium.webdriver.remote.webdriver import WebDriver
 import selenium.webdriver.support.expected_conditions as EC
 
 import stockfish
+import chess
 import json
 
 selenium_logger = logging.getLogger('selenium')
@@ -38,11 +39,17 @@ stockfish_dir = "./stockfish"
 stockfish_path = stockfish_dir + "/stockfish"
 executor = concurrent.futures.ThreadPoolExecutor(5)
 
-previous_moves = collections.deque(maxlen=5)
+# Decrease/increase this parameter if the default move delay is too fast / too slow
+MOVE_DELAY_MULTIPLIER = 1.0
+
+PREVIOUS_FEN_POSITIONS = collections.defaultdict(lambda: 0)
+NEW_GAME_BUTTON_CLICK_TIME = time()
+
+# the browser will be refreshed after 45 seconds of matchmaking if no match was found.
+NEW_GAME_BUTTON_CLICK_TIMEOUT = 45
 
 class C:
-    user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " \
-                 "(KHTML, like Gecko) Chrome/83.0.4103.53 Safari/537.36"
+    user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
     board = "board"
     flipped = "flipped"
     outerHTML = "outerHTML"
@@ -366,31 +373,44 @@ def controls_visible(driver):
     except selenium.common.exceptions.StaleElementReferenceException:
         return False
 
+def get_fen_deriv(fen: str, move_uci: str) -> str:
+    board = chess.Board(fen)
+    move = chess.Move.from_uci(move_uci)
+    #assert move in board.legal_moves:
+    board.push(move)
+    return board.fen()
+
 def get_next_move(engine: stockfish.Stockfish):
-    global previous_moves
+    global PREVIOUS_FEN_POSITIONS
+    
     mv = engine.get_best_move()
-    if mv not in previous_moves:
-        previous_moves.append(mv)
+    current_fen = engine.get_fen_position()
+    fen_deriv = get_fen_deriv(current_fen, mv)
+
+    if PREVIOUS_FEN_POSITIONS[fen_deriv]<2:
+        PREVIOUS_FEN_POSITIONS[fen_deriv]+=1
         return mv
-    Log.debug(f"The best move {mv} will likely cause a draw. Choosing another move")
+    
+    Log.debug(f"The best move {mv} will cause a draw. Choosing another move")
     found = False
     top_moves = [x["Move"] for x in engine.get_top_moves(5)]
     print(top_moves)
+
     for i, mv in enumerate(top_moves):
-        if mv not in previous_moves:
+        fen_deriv = get_fen_deriv(current_fen, mv)
+        if PREVIOUS_FEN_POSITIONS[fen_deriv]<2:
             found = True
             break
-        # the move will not cause a draw yet
-        if i < 1:
-            Log.debug(f"the move {mv} will not cause a draw yet")
-            found = True
-            break
-        # the move will likely cause a draw
+        # FEN will be repeated 3 times after this move
+        # the move will cause a draw
+
     if not found:
-        Log.error(f"The best move {top_moves[0]} will lead to a draw.")
-        previous_moves.append(top_moves[0])
-        return top_moves[0]
-    previous_moves.append(mv)
+        mv = top_moves[0]
+        Log.error(f"No move was found to prevent a draw. Playing {mv}")
+        PREVIOUS_FEN_POSITIONS[get_fen_deriv(current_fen, mv)]+=1
+        return mv
+
+    PREVIOUS_FEN_POSITIONS[fen_deriv]+=1
     return mv
 
 @trace_exec_time
@@ -422,7 +442,7 @@ async def play(driver: webdriver.Chrome, engine: stockfish.Stockfish, move):
 
 async def actions(engine: stockfish.Stockfish, driver_: webdriver.Chrome):
     engine.set_fen_position("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", True)
-    previous_moves.clear()
+    PREVIOUS_FEN_POSITIONS.clear()
     if elo_rating_ > 0:
         engine.set_elo_rating(elo_rating_)
 
@@ -536,7 +556,7 @@ async def actions(engine: stockfish.Stockfish, driver_: webdriver.Chrome):
         Log.info("Next move: %s", move)
         wt = 0
         if move_delay:
-            wt = get_move_delay(t_)
+            wt = get_move_delay(t_) * MOVE_DELAY_MULTIPLIER
             wt = wt if loop_id > 4 else max(wt, abs(random.random() / 3) + 0.1)
             Log.debug("wt=%.3f last_wt=%.3f", wt, last_wt)
             sleep(wt)
@@ -568,6 +588,7 @@ async def main_():
         executor.shutdown(cancel_futures=True)
 
     async def handle_menu_buttons(wait):
+        global NEW_GAME_BUTTON_CLICK_TIME
         try:
             wait.until(EC.element_to_be_clickable((By.XPATH, '//a[@id="guest-button"]'))).click()
             await asyncio.sleep(0.5)
@@ -588,8 +609,17 @@ async def main_():
             _ = new_game_buttons.find_element(By.XPATH, C.new_game_button_sub_xpath % "New")
             await asyncio.sleep(0.5)
             _.click()
+            NEW_GAME_BUTTON_CLICK_TIME=time()
         except selenium.common.exceptions.WebDriverException:
             pass
+        
+        if time()-NEW_GAME_BUTTON_CLICK_TIME>NEW_GAME_BUTTON_CLICK_TIMEOUT:
+            # Sometimes, the "New Game" button does not start a new game 
+            # possibly due to a chess.com server related matchmaking bug or network issues.
+            # The driver will be refreshed in such cases
+            driver.refresh()
+            NEW_GAME_BUTTON_CLICK_TIME=time()
+            await asyncio.sleep(1)
 
     async def handle_driver_exc(e):
         try:
