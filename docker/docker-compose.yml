@@ -1,34 +1,47 @@
-version: '3'
-
 networks:
   chess-bot:
     driver: bridge
-    
+
 services:
 
-  selenium_standalone:
-    container_name: selenium-chess
-    image: selenium/standalone-chrome:130.0
+  selenium-hub:
+    image: selenium/hub:4.14.1
+    container_name: selenium-hub
+    ports:
+      - "4444:4444"
+    networks:
+      - chess-bot
+
+  selenium-node-chrome:
+    image: selenium/node-chrome:4.14.1
     shm_size: 4gb
     environment:
+      - SE_EVENT_BUS_HOST=selenium-hub
+      - SE_EVENT_BUS_PUBLISH_PORT=4442
+      - SE_EVENT_BUS_SUBSCRIBE_PORT=4443
       - VNC_NO_PASSWORD=1
       - SCREEN_WIDTH=1920
       - SCREEN_HEIGHT=1080
     ports:
-      - "7901:7900"
+      - "7902-7904:7900"
+    depends_on:
+      - selenium-hub
     networks:
       - chess-bot
-      
+    deploy:
+      replicas: 2
+
   chess-com-bot:
-    container_name: chess-com-bot
     build: ..
-    depends_on:
-      - selenium_standalone
     environment:
       - elo_rating=-1
       - game_timer_ms=150000
       - first_move_w=e2e4
-      - hub_host=selenium-chess
+      - hub_host=selenium-hub
       - hub_port=4444
+    depends_on:
+      - selenium-hub
     networks:
       - chess-bot
+    deploy:
+      replicas: 2
