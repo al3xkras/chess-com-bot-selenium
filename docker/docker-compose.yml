@@ -23,13 +23,14 @@ services:
       - SCREEN_WIDTH=1920
       - SCREEN_HEIGHT=1080
     ports:
-      - "7902-7904:7900"
+      # to assign multiple ports (example): "7900-7905:7900"
+      - "7901-7901:7900"
     depends_on:
       - selenium-hub
     networks:
       - chess-bot
     deploy:
-      replicas: 2
+      replicas: 1
 
   chess-com-bot:
     build: ..
@@ -44,4 +45,4 @@ services:
     networks:
       - chess-bot
     deploy:
-      replicas: 2
+      replicas: 1

@@ -59,7 +59,7 @@ class C:
     highlight = "highlight"
     class_ = "class"
     space = " "
-    controls_xpath = "//div[@class='game-controls-controller-component' or @class='live-game-buttons-component']"
+    controls_xpath = "//div[@class='game-controls-controller-component' or @class='live-game-buttons-component' or @class='game-icons-container-component']"
     new_game_buttons_xpath = "//div[button[span[contains(text(),'New') or contains(text(),'Decline') or contains(text(),'Rem')]]]"
     new_game_button_sub_xpath = "./button[span[contains(text(), \"%s\")]]"
     some_id = "p1234"
@@ -447,12 +447,12 @@ async def actions(engine: stockfish.Stockfish, driver_: webdriver.Chrome):
         engine.set_elo_rating(elo_rating_)
 
     try:
-        # Log.info("Waiting for a \"board\" element")
+        #Log.info("Waiting for a \"board\" element")
         await wait_until(driver_, C.wait_50ms, min_n_elements_exist(
             by=By.CLASS_NAME,
             selector=C.board
         ))
-        # Log.info("Waiting for the game to start")
+        #Log.info("Waiting for the game to start")
         await wait_until(driver_, C.wait_50ms, min_n_elements_exist(
             by=By.XPATH,
             selector=C.controls_xpath,
