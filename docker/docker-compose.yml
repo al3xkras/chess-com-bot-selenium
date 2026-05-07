@@ -11,6 +11,7 @@ services:
       - "4444:4444"
     networks:
       - chess-bot
+    stop_grace_period: 1s
 
   selenium-node-chrome:
     image: selenium/node-chrome:4.14.1
@@ -19,25 +20,28 @@ services:
       - SE_EVENT_BUS_HOST=selenium-hub
       - SE_EVENT_BUS_PUBLISH_PORT=4442
       - SE_EVENT_BUS_SUBSCRIBE_PORT=4443
+      - SE_NODE_SESSION_TIMEOUT=120
       - VNC_NO_PASSWORD=1
       - SCREEN_WIDTH=1920
       - SCREEN_HEIGHT=1080
     ports:
       # to assign multiple ports (example): "7900-7905:7900"
-      - "7901-7901:7900"
+      #- "7910-7914:7900"
+      - "7910:7900"
     depends_on:
       - selenium-hub
     networks:
       - chess-bot
     deploy:
       replicas: 1
+    stop_grace_period: 1s
 
   chess-com-bot:
     build: ..
     environment:
       - elo_rating=-1
       - game_timer_ms=150000
-      - first_move_w=e2e4
+      - first_move_w=g1f3
       - hub_host=selenium-hub
       - hub_port=4444
     depends_on:
@@ -46,3 +50,4 @@ services:
       - chess-bot
     deploy:
       replicas: 1
+    stop_grace_period: 1s

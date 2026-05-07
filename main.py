@@ -105,7 +105,30 @@ class C:
     task_wait = "task_wait"
     num_to_let = dict(zip(range(1, 9), "abcdefgh"))
     let_to_num = dict((v, k) for k, v in num_to_let.items())
+    xpath_btn_choose_game_type='//div[contains(@data-cy,"new-game-time-selector")]'
+    xpath_btn_game_type_selection='//button[contains(@data-cy, "time-selector")]/span[contains(text(), "%s")]'
+    xpath_btn_start_game='//button[contains(@data-cy,"new-game-index-play")]'
+    game_type_selections={
+        "1min": "1 min",
+        "1+1": "1 | 1",
+        "2+1": "2 | 1",
+        "3min": "3 min",
+        "3+2": "3 | 2",
+        "5min": "5 min",
+        "10min": "10 min",
+        "15+10": "15 | 10",
+        "30min": "30 min",
+        "random_leq5min": [
+            "1min", "3min", "5min"
+        ],
+        "random_leq10min": [
+            "1min","3min","5min","10min"
+        ]
+    }
+    link_play='//a[contains(@href,"/play")]'
+    link_play_online='//a[contains(@href,"/play/online")]'
 
+_selection_open = False
 
 class LogFormatter(logging.Formatter):
     grey = "\x1b[38;20m"
@@ -376,9 +399,10 @@ def controls_visible(driver):
 def get_fen_deriv(fen: str, move_uci: str) -> str:
     board = chess.Board(fen)
     move = chess.Move.from_uci(move_uci)
-    #assert move in board.legal_moves:
     board.push(move)
-    return board.fen()
+    out = board.fen().split(" ", 1)[0]
+    print("FEN: ",out)
+    return out
 
 def get_next_move(engine: stockfish.Stockfish):
     global PREVIOUS_FEN_POSITIONS
@@ -391,8 +415,9 @@ def get_next_move(engine: stockfish.Stockfish):
         PREVIOUS_FEN_POSITIONS[fen_deriv]+=1
         return mv
     
-    Log.debug(f"The best move {mv} will cause a draw. Choosing another move")
+    Log.debug(f"Best move {mv} will cause a draw. Choosing another move")
     found = False
+    
     top_moves = [x["Move"] for x in engine.get_top_moves(5)]
     print(top_moves)
 
@@ -401,15 +426,12 @@ def get_next_move(engine: stockfish.Stockfish):
         if PREVIOUS_FEN_POSITIONS[fen_deriv]<2:
             found = True
             break
-        # FEN will be repeated 3 times after this move
-        # the move will cause a draw
-
+        
     if not found:
         mv = top_moves[0]
+        fen_deriv = get_fen_deriv(current_fen, mv)
         Log.error(f"No move was found to prevent a draw. Playing {mv}")
-        PREVIOUS_FEN_POSITIONS[get_fen_deriv(current_fen, mv)]+=1
-        return mv
-
+    
     PREVIOUS_FEN_POSITIONS[fen_deriv]+=1
     return mv
 
@@ -501,8 +523,14 @@ async def actions(engine: stockfish.Stockfish, driver_: webdriver.Chrome):
         op_move_time = time() - t
         Log.debug("op_move_time = %.3f", op_move_time)
         mv = "".join(get_last_move(driver_))
+        try:
+            engine.make_moves_from_current_position([mv])
+        except:
+            # an exception commonly occurs if opponent promotes a piece.
+            # by default it is assumed that a queen was promoted
+            mv+="q"
+            engine.make_moves_from_current_position([mv])
         Log.info("Opponent's move: %s", mv)
-        engine.make_moves_from_current_position([mv])
         return False
 
     def move_fmt(move_):
@@ -573,20 +601,46 @@ async def actions(engine: stockfish.Stockfish, driver_: webdriver.Chrome):
             return True
     return False
 
+class PreGameStartHandlers:
 
-async def main_():
-    driver = setup_driver()
-    engine = stockfish.Stockfish(path=os.path.join(os.getcwd(), stockfish_path))
 
-    async def stop_event_loop():
-        Log.debug("Stopping the event loop...")
-        asyncio_loop = asyncio.get_event_loop()
-        while asyncio_loop.is_running():
-            asyncio_loop.stop()
+    @staticmethod
+    async def handle_title_screen(wait):
+        try:
+            wait.until(EC.element_to_be_clickable((By.XPATH, C.link_play))).click()
             await asyncio.sleep(0.5)
-        driver.quit()
-        executor.shutdown(cancel_futures=True)
+        except selenium.common.exceptions.TimeoutException:
+            pass
+        try:
+            wait.until(EC.element_to_be_clickable((By.XPATH, C.link_play_online))).click()
+            await asyncio.sleep(0.5)
+        except selenium.common.exceptions.TimeoutException:
+            pass
 
+    @staticmethod
+    async def handle_play_online_screen(wait):
+        global current_game_type, _selection_open
+        try:
+            wait.until(EC.visibility_of_element_located((By.XPATH, C.xpath_btn_choose_game_type))).click()
+            await asyncio.sleep(0.5)
+        except selenium.common.exceptions.TimeoutException:
+            pass
+        try:
+            wait.until(EC.element_to_be_clickable((
+                By.XPATH, C.xpath_btn_game_type_selection%current_game_type))).click()
+            _selection_open=True
+            await asyncio.sleep(0.5)
+        except selenium.common.exceptions.TimeoutException:
+            pass
+        if _selection_open:
+            await asyncio.sleep(0.5)
+            try:
+                wait.until(EC.visibility_of_element_located((By.XPATH, C.xpath_btn_start_game))).click()
+                _selection_open=False
+            except selenium.common.exceptions.TimeoutException:
+                pass
+        
+    @staticmethod
     async def handle_menu_buttons(wait):
         global NEW_GAME_BUTTON_CLICK_TIME
         try:
@@ -621,6 +675,21 @@ async def main_():
             NEW_GAME_BUTTON_CLICK_TIME=time()
             await asyncio.sleep(1)
 
+async def main_():
+    global url, autostart_
+    driver = setup_driver()
+    engine = stockfish.Stockfish(path=os.path.join(os.getcwd(), stockfish_path))
+
+    async def stop_event_loop():
+        Log.debug("Stopping the event loop...")
+        asyncio_loop = asyncio.get_event_loop()
+        while asyncio_loop.is_running():
+            asyncio_loop.stop()
+            await asyncio.sleep(0.5)
+        driver.quit()
+        executor.shutdown(cancel_futures=True)
+
+
     async def handle_driver_exc(e):
         try:
             driver.quit()
@@ -638,6 +707,9 @@ async def main_():
         except selenium.common.exceptions.NoSuchWindowException as e:
             Log.error(traceback.format_exc())
             await handle_driver_exc(e)
+        except selenium.common.exceptions.WebDriverException as e:
+            Log.error(traceback.format_exc())
+            await handle_driver_exc(e)    
         except:
             Log.error(traceback.format_exc())
             await asyncio.sleep(1)
@@ -648,7 +720,11 @@ async def main_():
     wait_ = WebDriverWait(driver, 0.1)
     while await loop():
         if next_game_auto_ and "computer" not in driver.current_url:
-            await handle_menu_buttons(wait_)
+            await PreGameStartHandlers.handle_menu_buttons(wait_)
+        if autostart_ and "play/online" not in driver.current_url:
+            await PreGameStartHandlers.handle_title_screen(wait_)
+        if autostart_:
+            await PreGameStartHandlers.handle_play_online_screen(wait_)
         await asyncio.sleep(0.1)
 
     Log.info("Closing Selenium WebDriver in %s seconds" % C.exit_delay)
@@ -659,8 +735,10 @@ async def main_():
 def main(elo_rating=-1, game_timer_ms: int = 300000,
          first_move_w: str = "e2e4",
          enable_move_delay: bool = False,
-         next_game_auto: str = "True"):
-    global game_timer, first_move_for_white
+         next_game_auto: str = "True", 
+         autostart: str = "True", game_type="random_leq5min"):
+         
+    global url, autostart_, game_timer, first_move_for_white, current_game_type
     global move_delay, elo_rating_, next_game_auto_
 
     game_timer = int(game_timer_ms)
@@ -669,7 +747,14 @@ def main(elo_rating=-1, game_timer_ms: int = 300000,
     move_delay = enable_move_delay
     elo_rating_ = int(elo_rating)
     next_game_auto_ = next_game_auto[0].lower() == "t"
-
+    autostart_ = autostart[0].lower() == "t"
+    current_game_type = C.game_type_selections.get(game_type, None)
+    if isinstance(current_game_type, list):
+        current_game_type = C.game_type_selections.get(random.choice(current_game_type), None)
+    Log.info("CURRENT GAME TYPE: %s"%current_game_type)
+    if not current_game_type:
+        raise RuntimeError(f"Unknown game type: {game_type}")
+    
     def main_ev_loop():
         ev_loop = asyncio.new_event_loop()
         ev_loop.set_default_executor(executor)
@@ -687,7 +772,7 @@ def main(elo_rating=-1, game_timer_ms: int = 300000,
 def main_docker():
     kw = dict(filter(lambda _: _[1] is not None, ((arg, os.environ.get(arg, None)) for arg in [
         "elo_rating", "game_timer_ms", "first_move_w",
-        "enable_move_delay"])))
+        "enable_move_delay", "autostart"])))
     Log.debug(f"kwargs: {kw}")
     main(**kw)
 
