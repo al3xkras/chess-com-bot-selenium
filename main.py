@@ -34,7 +34,8 @@ logging.getLogger('selenium').setLevel(logging.DEBUG)
 logging.getLogger('selenium.webdriver.remote').setLevel(logging.DEBUG)
 logging.getLogger('selenium.webdriver.common').setLevel(logging.DEBUG)
 
-url = "https://www.chess.com/"
+url = "https://www.chess.com/play/online"
+
 stockfish_dir = "./stockfish"
 stockfish_path = stockfish_dir + "/stockfish"
 executor = concurrent.futures.ThreadPoolExecutor(5)
@@ -105,9 +106,11 @@ class C:
     task_wait = "task_wait"
     num_to_let = dict(zip(range(1, 9), "abcdefgh"))
     let_to_num = dict((v, k) for k, v in num_to_let.items())
-    xpath_btn_choose_game_type='//div[contains(@data-cy,"new-game-time-selector")]'
-    xpath_btn_game_type_selection='//button[contains(@data-cy, "time-selector")]/span[contains(text(), "%s")]'
-    xpath_btn_start_game='//button[contains(@data-cy,"new-game-index-play")]'
+    xpath_btn_choose_game_type='//button[contains(@class,"cc-dropdown-button-full")]/span[contains(@class, "cc-icon-glyph")]'
+    xpath_btn_game_type_selection='//button[contains(@class, "cc-button-secondary")]/span[contains(text(), "%s")]'
+    xpath_btn_start_game='//button[contains(@class, "cc-button-primary")]/span[contains(text(), "Start")]'
+    xpath_btn_control_game_type_selection='//button[contains(@class,"cc-dropdown-button-full") and contains(text(), "%s"))]'
+
     game_type_selections={
         "1min": "1 min",
         "1+1": "1 | 1",
@@ -129,6 +132,7 @@ class C:
     link_play_online='//a[contains(@href,"/play/online")]'
 
 _selection_open = False
+_gamemode_selected = False
 
 class LogFormatter(logging.Formatter):
     grey = "\x1b[38;20m"
@@ -437,6 +441,7 @@ def get_next_move(engine: stockfish.Stockfish):
 
 @trace_exec_time
 async def play(driver: webdriver.Chrome, engine: stockfish.Stockfish, move):
+    global _gamemode_selected
     pos0 = C.square + str(C.let_to_num[move[0]]) + move[1]
     pos1 = C.square + str(C.let_to_num[move[2]]) + move[3]
     cls = C.space.join([C.piece, pos1, C.white_pawn, C.some_id])
@@ -455,6 +460,7 @@ async def play(driver: webdriver.Chrome, engine: stockfish.Stockfish, move):
     except selenium.common.exceptions.TimeoutException as e:
         if next_game_auto_ and not controls_visible(driver):
             driver.refresh()
+            _gamemode_selected = False
             await asyncio.sleep(1)
         raise e
     driver.execute_script(scr_rm)
@@ -606,6 +612,8 @@ class PreGameStartHandlers:
 
     @staticmethod
     async def handle_title_screen(wait):
+        global _gamemode_selected
+        _gamemode_selected = False
         try:
             wait.until(EC.element_to_be_clickable((By.XPATH, C.link_play))).click()
             await asyncio.sleep(0.5)
@@ -619,7 +627,9 @@ class PreGameStartHandlers:
 
     @staticmethod
     async def handle_play_online_screen(wait):
-        global current_game_type, _selection_open
+        global current_game_type, _selection_open, _gamemode_selected
+        if _gamemode_selected:
+            return
         try:
             wait.until(EC.visibility_of_element_located((By.XPATH, C.xpath_btn_choose_game_type))).click()
             await asyncio.sleep(0.5)
@@ -637,12 +647,13 @@ class PreGameStartHandlers:
             try:
                 wait.until(EC.visibility_of_element_located((By.XPATH, C.xpath_btn_start_game))).click()
                 _selection_open=False
+                _gamemode_selected=True
             except selenium.common.exceptions.TimeoutException:
                 pass
         
     @staticmethod
-    async def handle_menu_buttons(wait):
-        global NEW_GAME_BUTTON_CLICK_TIME
+    async def handle_menu_buttons(driver, wait):
+        global NEW_GAME_BUTTON_CLICK_TIME, _gamemode_selected
         try:
             wait.until(EC.element_to_be_clickable((By.XPATH, '//a[@id="guest-button"]'))).click()
             await asyncio.sleep(0.5)
@@ -672,11 +683,12 @@ class PreGameStartHandlers:
             # possibly due to a chess.com server related matchmaking bug or network issues.
             # The driver will be refreshed in such cases
             driver.refresh()
+            _gamemode_selected = False
             NEW_GAME_BUTTON_CLICK_TIME=time()
             await asyncio.sleep(1)
 
 async def main_():
-    global url, autostart_
+    global url, autostart_, _gamemode_selected
     driver = setup_driver()
     engine = stockfish.Stockfish(path=os.path.join(os.getcwd(), stockfish_path))
 
@@ -699,6 +711,7 @@ async def main_():
         raise e
 
     async def loop():
+        global _gamemode_selected
         try:
             return await actions(engine, driver)
         except KeyboardInterrupt as e:
@@ -713,6 +726,7 @@ async def main_():
         except:
             Log.error(traceback.format_exc())
             await asyncio.sleep(1)
+            _gamemode_selected = False
             return True
 
     driver.get(url)
@@ -720,11 +734,14 @@ async def main_():
     wait_ = WebDriverWait(driver, 0.1)
     while await loop():
         if next_game_auto_ and "computer" not in driver.current_url:
-            await PreGameStartHandlers.handle_menu_buttons(wait_)
+            await PreGameStartHandlers.handle_menu_buttons(driver, wait_)
         if autostart_ and "play/online" not in driver.current_url:
             await PreGameStartHandlers.handle_title_screen(wait_)
         if autostart_:
             await PreGameStartHandlers.handle_play_online_screen(wait_)
+        if "register" in driver.current_url:
+            driver.get(url)
+            _gamemode_selected = False
         await asyncio.sleep(0.1)
 
     Log.info("Closing Selenium WebDriver in %s seconds" % C.exit_delay)
