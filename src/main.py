@@ -9,12 +9,19 @@ import sys
 import threading
 import traceback
 import typing
+import json
+import argparse
+import logging
+import atexit
+import functools
 from time import time, sleep
 
-import logging
+import stockfish
+import chess
+
 import selenium.common.exceptions
 import selenium.webdriver.common.devtools.v119 as devtools
-import typer
+
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
@@ -22,10 +29,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.remote.webdriver import WebDriver
 import selenium.webdriver.support.expected_conditions as EC
-
-import stockfish
-import chess
-import json
+from selenium.webdriver.common.action_chains import ActionChains
 
 selenium_logger = logging.getLogger('selenium')
 selenium_logger.setLevel(logging.INFO)
@@ -34,7 +38,7 @@ logging.getLogger('selenium').setLevel(logging.DEBUG)
 logging.getLogger('selenium.webdriver.remote').setLevel(logging.DEBUG)
 logging.getLogger('selenium.webdriver.common').setLevel(logging.DEBUG)
 
-url = "https://www.chess.com/play/online"
+url = "https://www.chess.com"
 
 stockfish_dir = "./stockfish"
 stockfish_path = stockfish_dir + "/stockfish"
@@ -48,6 +52,16 @@ NEW_GAME_BUTTON_CLICK_TIME = time()
 
 # the browser will be refreshed after 45 seconds of matchmaking if no match was found.
 NEW_GAME_BUTTON_CLICK_TIMEOUT = 45
+
+ENV_KEYS = [
+    "elo_rating",
+    "game_timer_ms",
+    "first_move_w",
+    "enable_move_delay",
+    "next_game_auto",
+    "autostart",
+    "game_type",
+]
 
 class C:
     user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
@@ -128,8 +142,8 @@ class C:
             "1min","3min","5min","10min"
         ]
     }
-    link_play='//a[contains(@href,"/play")]'
-    link_play_online='//a[contains(@href,"/play/online")]'
+    link_play='//a[contains(@href,"/play") and contains(@class, "sidebar-link")]'
+    link_play_online='//a[contains(@href,"/play/online") and contains(@class, "sub-menu-link-container")]'
 
 _selection_open = False
 _gamemode_selected = False
@@ -192,7 +206,7 @@ if not os.path.exists(stockfish_path):
     input()
     exit(1)
 
-
+@functools.lru_cache(1)
 def is_docker():
     return os.environ.get("hub_host", None) is not None
 
@@ -205,7 +219,7 @@ def execute_cmd_cdp_workaround(drv: WebDriver, cmd, params: dict):
     return response.get('value')
 
 
-def init_remote_driver(hub_url, options_, max_retries=5, retry_delay=2):
+def init_remote_driver(hub_url, options_, max_retries=5, retry_delay=2): 
     for _ in range(max_retries):
         try:
             return webdriver.Remote(command_executor=hub_url, options=options_)
@@ -216,6 +230,7 @@ def init_remote_driver(hub_url, options_, max_retries=5, retry_delay=2):
 
 
 def setup_driver():
+    global _gamemode_selected, _selection_open
     profile_dir = os.path.join(os.getcwd(), "Profile/Selenium")
     options = Options()
     service = Service()
@@ -230,6 +245,8 @@ def setup_driver():
     options.add_argument("--accept-lang=en-US")
     
     if is_docker():
+        options.add_argument("--disable-dev-shm-usage") # important in Docker/Linux
+        options.add_argument("--single-process")
         options.add_argument("--start-maximized")
         host = os.environ["hub_host"]
         port = os.environ["hub_port"]
@@ -247,6 +264,8 @@ def setup_driver():
         })
     chrome_driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
     Log.info(chrome_driver.execute_script("return navigator.userAgent;"))
+    _selection_open = False
+    _gamemode_selected = False
     return chrome_driver
 
 
@@ -611,11 +630,14 @@ class PreGameStartHandlers:
 
 
     @staticmethod
-    async def handle_title_screen(wait):
+    async def handle_title_screen(driver, wait):
         global _gamemode_selected
         _gamemode_selected = False
         try:
-            wait.until(EC.element_to_be_clickable((By.XPATH, C.link_play))).click()
+            sidemenu_play = wait.until(EC.element_to_be_clickable((By.XPATH, C.link_play)))
+            actions = ActionChains(driver)
+            # Perform hover
+            actions.move_to_element(sidemenu_play).perform()
             await asyncio.sleep(0.5)
         except selenium.common.exceptions.TimeoutException:
             pass
@@ -720,6 +742,11 @@ async def main_():
         except selenium.common.exceptions.NoSuchWindowException as e:
             Log.error(traceback.format_exc())
             await handle_driver_exc(e)
+        except selenium.common.exceptions.TimeoutException:
+            Log.error(traceback.format_exc())
+            await asyncio.sleep(1)
+            _gamemode_selected = False
+            return True
         except selenium.common.exceptions.WebDriverException as e:
             Log.error(traceback.format_exc())
             await handle_driver_exc(e)    
@@ -733,13 +760,14 @@ async def main_():
     asyncio.create_task(task_canceller())
     wait_ = WebDriverWait(driver, 0.1)
     while await loop():
-        if next_game_auto_ and "computer" not in driver.current_url:
+        driver_url = driver.current_url
+        if next_game_auto_ and "computer" not in driver_url:
             await PreGameStartHandlers.handle_menu_buttons(driver, wait_)
-        if autostart_ and "play/online" not in driver.current_url:
-            await PreGameStartHandlers.handle_title_screen(wait_)
-        if autostart_:
+        if autostart_ and not any(x in driver_url for x in ["play/online", "game"]):
+            await PreGameStartHandlers.handle_title_screen(driver, wait_)
+        if autostart_ and "game" not in driver_url:
             await PreGameStartHandlers.handle_play_online_screen(wait_)
-        if "register" in driver.current_url:
+        if autostart_ and "register" in driver_url:
             driver.get(url)
             _gamemode_selected = False
         await asyncio.sleep(0.1)
@@ -749,34 +777,115 @@ async def main_():
     driver.quit()
 
 
-def main(elo_rating=-1, game_timer_ms: int = 300000,
-         first_move_w: str = "e2e4",
-         enable_move_delay: bool = False,
-         next_game_auto: str = "True", 
-         autostart: str = "True", game_type="random_leq5min"):
+def parse_args():
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument("--elo_rating", required=True)
+    parser.add_argument("--game-timer-ms", required=True)
+    parser.add_argument("--first-move-w", required=True)
+    parser.add_argument("--enable-move-delay", required=True)
+    parser.add_argument("--next-game-auto", required=True)
+    parser.add_argument("--autostart", required=True)
+    parser.add_argument("--game-type")
+
+    return parser.parse_args()
+
+
+def main(elo_rating: str,
+        game_timer_ms: str,
+        first_move_w: str,
+        enable_move_delay: str,
+        next_game_auto: str,
+        autostart: str,
+        game_type: str):
+    
+    def to_bool(value: str) -> bool:
+        return str(value).strip().lower() in {"1", "true", "t", "yes", "y"}
+
+    # centralized normalization
+    global url, autostart_, game_timer, first_move_for_white
+    global current_game_type, move_delay, elo_rating_, next_game_auto_
+
+    game_timer = int(game_timer_ms)
+    first_move_for_white = to_bool(first_move_w)
+    move_delay = to_bool(enable_move_delay)
+    elo_rating_ = int(elo_rating)
+    next_game_auto_ = to_bool(next_game_auto)
+    autostart_ = to_bool(autostart)
+    current_game_type = C.game_type_selections.get(game_type)
+
+# -------------------------------------------------
+# CLI entrypoint
+# -------------------------------------------------
+
+def main_cli():
+    def build_parser():
+        parser = argparse.ArgumentParser()
+
+        for key in ENV_KEYS:
+            cli_name = f"--{key.replace('_', '-')}"
+            parser.add_argument(cli_name, dest=key, required=True)
+
+        return parser
+
+    parser = build_parser()
+    args = parser.parse_args()
+
+    Log.debug(f"argparse_args: {args}")
+    main(**vars(args))
+
+# -------------------------------------------------
+# Docker / environment entrypoint
+# -------------------------------------------------
+
+def main_docker():
+    kw = {
+        key: os.environ.get(key)
+        for key in ENV_KEYS
+        if os.environ.get(key) is not None
+    }
+
+    Log.debug(f"kwargs: {kw}")
+    main(**kw)
+
+def main(elo_rating: str, 
+         game_timer_ms: str,
+         first_move_w: str,
+         enable_move_delay: str,
+         next_game_auto: str, 
+         autostart: str, 
+         game_type:str):
          
-    global url, autostart_, game_timer, first_move_for_white, current_game_type
-    global move_delay, elo_rating_, next_game_auto_
+    global url, autostart_, game_timer, first_move_for_white, \
+        current_game_type, move_delay, elo_rating_, next_game_auto_
 
     game_timer = int(game_timer_ms)
     first_move_for_white = first_move_w
 
-    move_delay = enable_move_delay
+    move_delay = enable_move_delay[0].lower() == "t"
     elo_rating_ = int(elo_rating)
     next_game_auto_ = next_game_auto[0].lower() == "t"
     autostart_ = autostart[0].lower() == "t"
     current_game_type = C.game_type_selections.get(game_type, None)
+
     if isinstance(current_game_type, list):
         current_game_type = C.game_type_selections.get(random.choice(current_game_type), None)
-    Log.info("CURRENT GAME TYPE: %s"%current_game_type)
+        Log.info("CURRENT GAME TYPE: %s"%current_game_type)
     if not current_game_type:
         raise RuntimeError(f"Unknown game type: {game_type}")
     
+    def exit_handler(asyncio_loop, executor):
+        while asyncio_loop.is_running():
+            asyncio_loop.stop()
+            sleep(0.5)
+        executor.shutdown(cancel_futures=True)
+
     def main_ev_loop():
         ev_loop = asyncio.new_event_loop()
         ev_loop.set_default_executor(executor)
+        atexit.register(exit_handler, asyncio_loop=ev_loop, executor=executor)
         ev_loop.run_until_complete(main_())
-
+        
     if not is_docker():
         main_ev_loop()
     else:
@@ -785,16 +894,7 @@ def main(elo_rating=-1, game_timer_ms: int = 300000,
             thr.start()
             thr.join()
 
-
-def main_docker():
-    kw = dict(filter(lambda _: _[1] is not None, ((arg, os.environ.get(arg, None)) for arg in [
-        "elo_rating", "game_timer_ms", "first_move_w",
-        "enable_move_delay", "autostart"])))
-    Log.debug(f"kwargs: {kw}")
-    main(**kw)
-
-
 if __name__ == '__main__' and not is_docker():
-    typer.run(main)
+    main_cli()
 elif __name__ == '__main__':
     main_docker()

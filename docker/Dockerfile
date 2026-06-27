@@ -18,9 +18,13 @@ RUN pip install virtualenv && \
     venv/bin/pip install --no-cache-dir -r requirements.txt
 
 USER root
-COPY main.py docker/main.sh ./
-RUN chown -hR chess_user:chess_user /app/main.sh /app/main.py && \
-    chmod a+x /app/main.sh /app/main.py
+
+COPY ./src /app/src
+COPY docker/entrypoint.sh .
+
+RUN chown -hR chess_user:chess_user /app/src /app/entrypoint.sh && \
+    chmod a+x ./entrypoint.sh
+
 USER chess_user
 
-ENTRYPOINT ["bash", "-c", "/app/main.sh"]
+ENTRYPOINT ["bash", "-c", "/app/entrypoint.sh"]

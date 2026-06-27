@@ -5,6 +5,7 @@
 /Profile/
 /stockfish/
 target/
+venv
 !.mvn/wrapper/maven-wrapper.jar
 !**/src/main/**/target/
 !**/src/test/**/target/

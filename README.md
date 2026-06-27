@@ -1,80 +1,137 @@
-## chess-com-bot
 
-A Chess.com bot based on the Selenium WebDriver for browser automation and the Stockfish chess engine for position evaluation.
+# chess-com-bot
 
-Features:
+A Docker-based chess.com bot powered by **Selenium WebDriver** and the **Stockfish** chess engine.
 
-- Fully configurable (using command line arguments or docker-compose, see the list of available configurations below).
-- Fast response speed (minimum latency of about 100-150ms added to the Stockfish thinking time). Custom delays configurable.
-- Low resource usage (Docker-based build).
-- Cross-platform (supported on Linux, Docker and Windows). Most linux distributions (debian/ubuntu) should be supported but may require additional setup. Check out the Dockerfile (ubuntu-based) for more insight. Also make sure there exists a Stockfish build for your distribution, at the [Stockfish repo](https://github.com/official-stockfish/Stockfish/releases/)
-- The bot can work autonomously after the first game is started manually.
-- The bot closes most of the pop-up windows automatically.
-- The bot handles network/chess.com-related bugs and should continue to work if any occur.
+---
 
-### Setup (Docker):
+## ✨ Features
 
-1. Install Docker and Docker compose. 
-2. Run containers using the Docker compose: `docker_main.bat` / `docker_main.sh`.
+- ✅ Runs either in **Docker** or locally on the host system  
+- ✅ Simple configuration (see available options in `config.env`)  
+- ✅ Fully or partially automated (depending on configuration)  
+- ✅ Supported on **Windows 10/11** and **Linux** (tested on Ubuntu 24.04)
 
-   List of configurable docker-compose properties `docker/docker-compose.yml`:
-   - `elo_rating` - engine's ELO rating (default value: `-1`)
-   - `game_timer_ms` - game timer in milliseconds (default value: `150000`)
-   - `first_move_w` - initial move when playing white pieces (default value: `"e2e4"`)
-   - `enable_move_delay` - enable delay between moves (default value: `False`)
-   - `next_game_auto` - start the next game automatically (default value: `True`)
-4. Wait until a Chrome NoVNC session is loaded at http://localhost:7901/
-5. To check if the bot is working properly, start the first game manually and wait until the first move is made.
-6. To exit the program, run ```cd docker && docker compose stop```, or stop the containers from the Docker Desktop UI.
+---
 
-### Setup on Windows
+## 🚧 Currently Unimplemented
 
-1. Create a virtual environment:
-   ```cmd
-   git clone --depth 1 https://github.com/al3xkras/chess-com-bot-selenium chess-com-bot 
-   cd ./chess-com-bot
+- Persistent browser profiles when `STARTUP_TYPE=docker`
+
+---
+
+## ⚙️ Configuration Options
+
+Below is an overview of the supported environment variables defined in `config.env`:
+
+### Core Settings
+
+- **`STARTUP_TYPE`**: `local` | `docker`  
+  Determines whether the bot runs locally or inside Docker.
+
+- **`ELO_RATING`**: Integer ≥ -1  
+  If `ELO_RATING <= 0`, Stockfish will not limit its ELO.
+
+- **`FIRST_MOVE_W`**:  
+  The opening move played when the bot has the white pieces.
+
+- **`GAME_TIMER_MS`**:  
+  Game timer in milliseconds. Only affects maximum move delay.  
+  Ignored if `ENABLE_MOVE_DELAY=False`.
+
+- **`GAME_TYPE`**:  
+  One of:
+  ```
+  1min | 1+1 | 2+1 | 3min | 3+2 | 5min | 10min | 15+10 | 30min |
+  random_leq5min | random_leq10min
+  ```
+  - `random_leq5min` / `random_leq10min` selects a random mode up to blitz/rapid.
+  - `GAME_TIMER_MS` is **not adjusted automatically** when using random modes.
+
+- **`ENABLE_MOVE_DELAY`**: `True` | `False`  
+  Enables realistic move delays.  
+  If `False`, the bot plays as fast as possible.
+
+- **`AUTOSTART_FIRST_GAME`**: `True` | `False`  
+  Automatically starts the first game.  
+  ⚠️ Cannot log into a chess.com account if enabled.
+
+---
+
+### Docker-Specific Settings
+
+- **`NUM_REPLICAS`**: Positive integer  
+  Number of Docker replica containers to start.
+
+- **`REPLICA_PORTS`**:  
+  Must match `NUM_REPLICAS`:
+  - Single replica → single port (e.g., `7910`)
+  - Multiple replicas → port range (e.g., `7911-7914` for 4 replicas)
+
+- **`CHROMIUM_SCREEN_WIDTH` / `CHROMIUM_SCREEN_HEIGHT`**:  
+  Chromium window dimensions (only relevant when `STARTUP_TYPE=docker`).
+
+- **`SELENIUM_NODE_IDLE_TIMEOUT_SECONDS`**:  
+  Idle timeout in seconds.  
+  The Chrome session restarts after inactivity or a crash.
+
+- **`OPEN_BROWSER`**: `True` | `False`  
+  Automatically opens VNC URLs in the host's default browser.  
+  Opens multiple tabs if `NUM_REPLICAS > 1`.
+
+---
+
+# 🐳 Docker Setup
+
+1. Install **Docker** and **Docker Compose**
+2. Set `STARTUP_TYPE=docker` in `config.env`
+3. Run the main script:
+   ```bash
+   ./main.sh
    ```
-   
-   ```cmd
-   pip install virtualenv && virtualenv venv
+   or on Windows:
+   ```powershell
+   ./main.ps1
    ```
-   
-   ```cmd
-   "venv/Scripts/pip" install -r "requirements.txt"
+   > On Linux, root authentication may be required to access the Docker daemon.
+
+4. If `OPEN_BROWSER=True`, the browser opens automatically once Selenium nodes are initialized.
+5. If `AUTOSTART_FIRST_GAME=True`, the first game starts automatically. Otherwise, start it manually.
+6. To stop the bot:
+   ```bash
+   ./main.<sh/ps1> stop
    ```
-
-2. Choose a compatible Stockfish release at the 
-   [Stockfish repo](https://github.com/official-stockfish/Stockfish/releases).
-   
-   Example: https://github.com/official-stockfish/Stockfish/releases/tag/sf_16.1 .
-
-
-3. Unzip the stockfish executable into the ./stockfish/ directory. Rename the executable to "stockfish.exe" or "stockfish"
-
-
-4. Run the bot using the command line:
-   ```cmd
-   "./venv/Scripts/python" main.py
+   or
+   ```bash
+   ./main.<sh/ps1> kill
    ```
 
-   List of configurable command line arguments:
-   - `--elo-rating` - engine's ELO rating (default value: `-1`)
-   - `--game-timer-ms` - game timer in milliseconds (default value: `150000`)
-   - `--first-move-w` - initial move when playing white pieces (default value: `"e2e4"`)
-   - `--enable-move-delay` - enable delay between moves (default value: `False`)
-   - `--next-game-auto` - start the next game automatically (default value: `True`)
-   - `--help` - list all available options
-   
+---
 
-### Tested Windows OS & Chrome:
+# 💻 Local Setup (Windows / Linux)
 
-- Windows 11 Version 23H2 (Build 22631.3007); 
-- Chrome 121.0.6167.161 (Official Build) (64-bit) (cohort: Stable)
+> ⚠️ The local setup may result in unexpected issues depending on your host system.  
+> Docker is recommended for maximum stability.
 
-### Disclaimer
+0. Install Python >=3.10. Add Python to system PATH.
+1. Set `STARTUP_TYPE=local` in `config.env`.
+2. Make sure the `STOCKFISH_URL` matches your OS and architecture.
+3. Run:
+   ```bash
+   ./main.sh
+   ```
+   or:
+   ```powershell
+   ./main.ps1
+   ```
+   - Note that the first startup may take more time, because Selenium will have to pull the Chromium driver if it is not installed.
+4. To stop the bot:
+   - Terminate the process in the terminal, or  
+   - Close the browser window.
 
-The software is provided as-is, without warranties of any kind. The author is not responsible for any adverse effects, including but not limited to account bans, resulting from the use of this bot.
+---
 
-### Preview:
+# ⚠️ Disclaimer
 
-https://github.com/al3xkras/chess-com-bot-selenium/assets/62184786/eb664955-6a86-44bd-8daa-43dfb16954b2
+This software is provided **as is**, without warranty of any kind.  
+The author is not responsible for any adverse effects resulting from its use, including but not limited to **account bans**.

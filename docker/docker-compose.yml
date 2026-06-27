@@ -11,6 +11,7 @@ services:
       - "4444:4444"
     networks:
       - chess-bot
+    env_file: ../config.env
     stop_grace_period: 1s
 
   selenium-node-chrome:
@@ -20,28 +21,34 @@ services:
       - SE_EVENT_BUS_HOST=selenium-hub
       - SE_EVENT_BUS_PUBLISH_PORT=4442
       - SE_EVENT_BUS_SUBSCRIBE_PORT=4443
-      - SE_NODE_SESSION_TIMEOUT=30
+      - SE_NODE_SESSION_TIMEOUT=$SELENIUM_NODE_IDLE_TIMEOUT_SECONDS
+      - SCREEN_WIDTH=$CHROMIUM_SCREEN_WIDTH
+      - SCREEN_HEIGHT=$CHROMIUM_SCREEN_HEIGHT
       - VNC_NO_PASSWORD=1
-      - SCREEN_WIDTH=1920
-      - SCREEN_HEIGHT=1080
     ports:
       # to assign multiple ports (example): "7900-7905:7900"
-      - "7911-7914:7900"
-      #- "7910:7900"
+      - "$REPLICA_PORTS:7900"
     depends_on:
       - selenium-hub
     networks:
       - chess-bot
     deploy:
-      replicas: 4
+      replicas: $NUM_REPLICAS
+    env_file: ../config.env
     stop_grace_period: 1s
 
   chess-com-bot:
-    build: ..
+    build: 
+      context: ..
+      dockerfile: ./docker/Dockerfile
     environment:
-      - elo_rating=-1
-      - game_timer_ms=150000
-      - first_move_w=g1f3
+      - elo_rating=$ELO_RATING
+      - game_timer_ms=$GAME_TIMER_MS
+      - first_move_w=$FIRST_MOVE_W
+      - enable_move_delay=$ENABLE_MOVE_DELAY
+      - next_game_auto=$START_NEW_GAME_AUTOMATICALLY
+      - autostart=$AUTOSTART_FIRST_GAME
+      - game_type=$GAME_TYPE
       - hub_host=selenium-hub
       - hub_port=4444
     depends_on:
@@ -49,5 +56,6 @@ services:
     networks:
       - chess-bot
     deploy:
-      replicas: 4
+      replicas: $NUM_REPLICAS
     stop_grace_period: 1s
+    env_file: ../config.env
