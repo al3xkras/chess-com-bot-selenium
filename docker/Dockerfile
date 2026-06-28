@@ -23,6 +23,7 @@ COPY ./src /app/src
 COPY docker/entrypoint.sh .
 
 RUN chown -hR chess_user:chess_user /app/src /app/entrypoint.sh && \
+    sed -i 's/\r$//' /app/entrypoint.sh && \
     chmod a+x ./entrypoint.sh
 
 USER chess_user
